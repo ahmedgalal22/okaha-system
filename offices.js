@@ -1420,6 +1420,21 @@ function _buildOfficeBolsaPrintBody(card, office, esc) {
     </tr>
   `).join('');
 
+  const totals = [
+    { label: 'عدد الصفوف', value: String(card.totals.row_count) },
+    { label: 'إجمالي الوزن', value: _fmt(card.totals.weight) },
+    {
+      label: 'إجمالي السعر الكلي',
+      value: card.totals.total_price === null ? '—' : _fmt(card.totals.total_price),
+    },
+  ];
+  const totalsHeaders = totals
+    .map((total) => `<th scope="col">${esc(total.label)}</th>`)
+    .join('');
+  const totalsValues = totals
+    .map((total) => `<td>${esc(total.value)}</td>`)
+    .join('');
+
   return `
     <div class="print-header">
       <h2>تسجيل البوالص</h2>
@@ -1428,15 +1443,14 @@ function _buildOfficeBolsaPrintBody(card, office, esc) {
         <span>العميل: <strong>${esc(office?.name || '')}</strong></span>
       </div>
     </div>
-    <table>
+    <table class="bolsa-print-items-table">
       <thead><tr>${headers}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="print-footer">
-      <span>عدد الصفوف: <strong>${esc(String(card.totals.row_count))}</strong></span>
-      <span>إجمالي الوزن: <strong>${esc(_fmt(card.totals.weight))}</strong></span>
-      <span>إجمالي السعر الكلي: <strong>${card.totals.total_price === null ? '—' : esc(_fmt(card.totals.total_price))}</strong></span>
-    </div>`;
+    <table class="bolsa-print-totals-table" aria-label="إجماليات نموذج البوالص">
+      <thead><tr>${totalsHeaders}</tr></thead>
+      <tbody><tr>${totalsValues}</tr></tbody>
+    </table>`;
 }
 
 async function _printOfficeBolsaForm(formId) {
@@ -1465,6 +1479,32 @@ async function _printOfficeBolsaForm(formId) {
     title: `تسجيل البوالص — ${card.bolsa_date || ''}`,
     body,
     orientation: 'landscape',
+    extraCSS: `
+      .bolsa-print-totals-table {
+        margin-top: 10px;
+        table-layout: fixed;
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
+      .bolsa-print-totals-table th {
+        background: #fff;
+        color: #000;
+        padding: 5px 8px;
+        border: 1.5px solid #000;
+        text-align: center;
+        font-size: 8pt;
+        font-weight: 700;
+      }
+      .bolsa-print-totals-table td {
+        background: #fff;
+        color: #000;
+        padding: 6px 8px;
+        border: 1.5px solid #000;
+        text-align: center;
+        font-size: 12pt;
+        font-weight: 800;
+      }
+    `,
   }), { id: 'office-bolsa-card-print-iframe' });
 }
 
