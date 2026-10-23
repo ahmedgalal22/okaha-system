@@ -609,6 +609,7 @@ let _activeDetailsTab = 'balance';
 let _detailsOfficeId = null;
 let _hamolaEditId = null;
 let _isOfficeDepositSaving = false;
+const _officeBolsaActionInFlight = new Set();
 const LAST_PAGE_CTX_KEY = 'financial_last_page_ctx';
 
 function _requireSession() {
@@ -630,6 +631,15 @@ function _balanceClass(value) {
 
 function _text(value) {
   return value == null ? '' : String(value);
+}
+
+function _escHtml(value) {
+  return _text(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function _renderListShell() {
@@ -1116,7 +1126,111 @@ async function showOfficeDetails(id) {
 }
 
 
-async function _getOfficeBolsaCards(office) {
+function _bolsaRowMatchesOffice(row, officeId, officeName) {
+  if (!row) return false;
+
+  const hasOfficeId = Object.prototype.hasOwnProperty.call(row, 'office_id');
+  return hasOfficeId
+    ? row.office_id != null && String(row.office_id) === officeId
+    : String(row.office || '').trim().toLowerCase() === officeName;
+}
+
+function _bolsaRowBelongsToOtherOffice(row, officeId, officeName) {
+  if (!row) return false;
+
+  const hasOfficeId = Object.prototype.hasOwnProperty.call(row, 'office_id');
+  if (hasOfficeId) {
+    return row.office_id != null && String(row.office_id) !== officeId;
+  }
+
+  const legacyOfficeName = String(row.office || '').trim().toLowerCase();
+  return Boolean(legacyOfficeName && legacyOfficeName !== officeName);
+}
+
+function _optionalFiniteNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function _getBolsaRowPricing(row) {
+  const weight = _optionalFiniteNumber(row?.weight) ?? 0;
+  const price = _optionalFiniteNumber(row?.price);
+
+  if (price === null) {
+    return { weight, price: null, totalPrice: null };
+  }
+
+  const storedTotalPrice = _optionalFiniteNumber(row?.total_price);
+  const totalPrice = storedTotalPrice === null
+    ? Money.round(weight * price)
+    : Money.round(storedTotalPrice);
+
+  return { weight, price, totalPrice };
+}
+
+function _buildOfficeBolsaFormCard(form, officeId, officeName) {
+  if (!form || form.id === null || form.id === undefined) return null;
+
+  const rows = Array.isArray(form.rows) ? form.rows : [];
+  const displayedRows = [];
+  let isShared = false;
+  let weightCents = 0;
+  let totalPriceCents = 0;
+  let hasMissingTotalPrice = false;
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+
+    if (_bolsaRowBelongsToOtherOffice(row, officeId, officeName)) {
+      isShared = true;
+    }
+
+    if (!_bolsaRowMatchesOffice(row, officeId, officeName)) continue;
+
+    const pricing = _getBolsaRowPricing(row);
+    displayedRows.push({
+      source: 'bolsa',
+      bolsa_form_id: String(form.id),
+      source_row_id: row._rowId ? String(row._rowId) : `${form.id}:${i}`,
+      row_index: i,
+      date: row.rowdate || '',
+      driver: row.driver || '',
+      car: row.carNo || '',
+      weight: pricing.weight,
+      loading: row.loading || '',
+      taktik: row.direction || '',
+      type: row.type || '',
+      price: pricing.price,
+      total_price: pricing.totalPrice,
+    });
+
+    weightCents += Money.toCents(pricing.weight);
+    if (pricing.totalPrice === null) {
+      hasMissingTotalPrice = true;
+    } else {
+      totalPriceCents += Money.toCents(pricing.totalPrice);
+    }
+  }
+
+  if (displayedRows.length === 0) return null;
+
+  return {
+    id: String(form.id),
+    bolsa_date: form.bolsa_date || '',
+    rows: displayedRows,
+    is_shared: isShared,
+    totals: {
+      row_count: displayedRows.length,
+      weight: Money.toDecimal(weightCents),
+      total_price: hasMissingTotalPrice ? null : Money.toDecimal(totalPriceCents),
+    },
+  };
+}
+
+async function _getOfficeBolsaFormCards(office) {
   const username = _moduleSessionUsername();
   const officeId = String(office.id);
   const officeName = String(office.name || '').trim().toLowerCase();
@@ -1131,77 +1245,237 @@ async function _getOfficeBolsaCards(office) {
   const cards = [];
   for (const form of forms) {
     if (form.deleted_at !== null) continue;
-    const rows = Array.isArray(form.rows) ? form.rows : [];
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row) continue;
-
-      const hasOfficeId = Object.prototype.hasOwnProperty.call(row, 'office_id');
-      const matchesOffice = hasOfficeId
-        ? row.office_id != null && String(row.office_id) === officeId
-        : String(row.office || '').trim().toLowerCase() === officeName;
-      if (!matchesOffice) continue;
-
-      cards.push({
-        source: 'bolsa',
-        bolsa_form_id: String(form.id),
-        source_row_id: row._rowId ? String(row._rowId) : `${form.id}:${i}`,
-        row_index: i,
-        date: row.rowdate || '',
-        driver: row.driver || '',
-        car: row.carNo || '',
-        weight: Number(row.weight) || 0,
-        loading: row.loading || '',
-        taktik: row.direction || '',
-        type: row.type || '',
-      });
-    }
+    const card = _buildOfficeBolsaFormCard(form, officeId, officeName);
+    if (card) cards.push(card);
   }
 
   return cards;
 }
 
-function _renderOfficeBolsaCards(cards) {
+function _renderOfficeBolsaFormCards(cards) {
   if (!Array.isArray(cards) || cards.length === 0) return '';
 
-  const tableRows = cards.map((c) => `
-    <tr data-source="bolsa" data-bolsa-form-id="${_text(c.bolsa_form_id)}" data-source-row-id="${_text(c.source_row_id)}">
-      <td>${_text(c.date)}</td>
-      <td>${_text(c.driver)}</td>
-      <td>${_text(c.car)}</td>
-      <td>${_fmt(c.weight)}</td>
-      <td>${_text(c.loading)}</td>
-      <td>${_text(c.taktik)}</td>
-      <td>${_text(c.type)}</td>
+  const headers = [
+    'التاريخ',
+    'اسم السائق',
+    'رقم المركبة',
+    'الوزن',
+    'التحميل',
+    'الجهة',
+    'النوع',
+    'السعر',
+    'السعر الكلي',
+  ].map((label) => `<th>${label}</th>`).join('');
+
+  const cardHtml = cards.map((card) => {
+    const tableRows = card.rows.map((row) => `
+      <tr data-source="bolsa" data-bolsa-form-id="${_escHtml(card.id)}" data-source-row-id="${_escHtml(row.source_row_id)}">
+        <td>${_escHtml(row.date)}</td>
+        <td>${_escHtml(row.driver)}</td>
+        <td>${_escHtml(row.car)}</td>
+        <td>${_fmt(row.weight)}</td>
+        <td>${_escHtml(row.loading)}</td>
+        <td>${_escHtml(row.taktik)}</td>
+        <td>${_escHtml(row.type)}</td>
+        <td>${row.price === null ? '—' : _fmt(row.price)}</td>
+        <td>${row.total_price === null ? '—' : _fmt(row.total_price)}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <article class="record-card bolsa-record" data-kind="bolsa" data-id="${_escHtml(card.id)}">
+        <header class="record-card__header">
+          <div class="record-card__heading">
+            <h3>نموذج تسجيل البوالص — ${_escHtml(card.bolsa_date || '—')}</h3>
+            ${card.is_shared ? '<span class="record-card__meta">نموذج مشترك</span>' : ''}
+          </div>
+          <div class="record-card__actions no-print">
+            <button type="button" data-action="edit-bolsa" data-id="${_escHtml(card.id)}">✏️ تعديل</button>
+            <button type="button" data-action="print-bolsa" data-id="${_escHtml(card.id)}">🖨️ طباعة</button>
+            <button type="button" data-action="delete-bolsa" data-id="${_escHtml(card.id)}">🗑️ حذف</button>
+          </div>
+        </header>
+        <div class="record-card__table-wrap">
+          <table class="record-table office-bolsa-cards-table">
+            <thead><tr>${headers}</tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+        <div class="record-card__footer">
+          <div>
+            <span>عدد الصفوف</span>
+            <strong>${card.totals.row_count}</strong>
+          </div>
+          <div>
+            <span>إجمالي الوزن</span>
+            <strong>${_fmt(card.totals.weight)}</strong>
+          </div>
+          <div>
+            <span>إجمالي السعر الكلي</span>
+            <strong>${card.totals.total_price === null ? '—' : _fmt(card.totals.total_price)}</strong>
+          </div>
+        </div>
+      </article>`;
+  }).join('');
+
+  return `
+    <section class="office-bolsa-cards" style="margin-top:20px;">
+      <h3 style="font-size:1rem;font-weight:800;color:#1f2937;margin:0 0 14px;">كارتات البوالص</h3>
+      <div style="display:flex;flex-direction:column;gap:20px;">${cardHtml}</div>
+    </section>`;
+}
+
+function _renderOfficeCards(bolsaFormCards = []) {
+  return _renderOfficeBolsaFormCards(bolsaFormCards)
+    || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذا العميل</div>';
+}
+
+async function _refreshOfficeBolsaCards() {
+  if (!_detailsOfficeId) return;
+  const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
+  if (office) await _renderDetailsContent(office);
+}
+
+async function _waitForBolsaAgentOption(agentId) {
+  const wantedAgentId = String(agentId ?? '').trim();
+  if (!wantedAgentId) {
+    throw new Error('تعذر العثور على المندوب الأصلي للنموذج، لذلك لم يتم فتح التعديل.');
+  }
+
+  const deadline = Date.now() + 3000;
+  while (Date.now() <= deadline) {
+    const select = document.getElementById('bolsaAgent');
+    const hasAgentOption = [...(select?.options || [])]
+      .some((option) => String(option.value) === wantedAgentId);
+    if (hasAgentOption) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+
+  throw new Error('تعذر العثور على المندوب الأصلي للنموذج، لذلك لم يتم فتح التعديل.');
+}
+
+async function _editOfficeBolsaForm(formId) {
+  const username = _moduleSessionUsername();
+  const form = await FinancialService.getBolsaForm(username, formId);
+  if (!form) {
+    await _refreshOfficeBolsaCards();
+    throw new Error('لم يعد نموذج البوالص موجودًا أو تم حذفه.');
+  }
+
+  if (typeof window.showPage === 'function') {
+    await window.showPage('bolsaPage');
+  }
+
+  await _waitForBolsaAgentOption(form.agent_id);
+  const { loadBolsaForEdit } = await import('./bolsas.js');
+  await loadBolsaForEdit(form);
+
+  const agentEl = document.getElementById('bolsaAgent');
+  if (!agentEl || String(agentEl.value) !== String(form.agent_id)) {
+    throw new Error('تعذر تحديد المندوب الأصلي للنموذج عند فتح التعديل.');
+  }
+}
+
+function _buildOfficeBolsaPrintBody(card, office, esc) {
+  const headers = [
+    'التاريخ',
+    'اسم السائق',
+    'رقم المركبة',
+    'الوزن',
+    'التحميل',
+    'الجهة',
+    'النوع',
+    'السعر',
+    'السعر الكلي',
+  ].map((label) => `<th class="print-th-emerald">${esc(label)}</th>`).join('');
+
+  const rows = card.rows.map((row) => `
+    <tr>
+      <td>${esc(row.date)}</td>
+      <td>${esc(row.driver)}</td>
+      <td>${esc(row.car)}</td>
+      <td style="text-align:center;">${esc(_fmt(row.weight))}</td>
+      <td>${esc(row.loading)}</td>
+      <td>${esc(row.taktik)}</td>
+      <td>${esc(row.type)}</td>
+      <td style="text-align:center;">${row.price === null ? '—' : esc(_fmt(row.price))}</td>
+      <td style="text-align:center;">${row.total_price === null ? '—' : esc(_fmt(row.total_price))}</td>
     </tr>
   `).join('');
 
   return `
-    <section class="office-bolsa-cards" style="margin-top:20px;">
-      <h3 style="font-size:1rem;font-weight:800;color:#1f2937;margin:0 0 10px;">كارتات البوالص</h3>
-      <div class="table-wrapper" style="max-height:60vh;overflow-y:auto;">
-        <table class="table office-bolsa-cards-table">
-          <thead style="background:linear-gradient(135deg,#1e3a8a,#2563eb);">
-            <tr>
-              <th style="color:#fff;">التاريخ</th>
-              <th style="color:#fff;">اسم السائق</th>
-              <th style="color:#fff;">رقم المركبة</th>
-              <th style="color:#fff;">وزن وش</th>
-              <th style="color:#fff;">التحميل</th>
-              <th style="color:#fff;">الجهة</th>
-              <th style="color:#fff;">النوع</th>
-            </tr>
-          </thead>
-          <tbody>${tableRows}</tbody>
-        </table>
+    <div class="print-header">
+      <h2>تسجيل البوالص</h2>
+      <div class="print-header-info">
+        <span>التاريخ: <strong>${esc(card.bolsa_date || '—')}</strong></span>
+        <span>العميل: <strong>${esc(office?.name || '')}</strong></span>
       </div>
-    </section>`;
+    </div>
+    <table>
+      <thead><tr>${headers}</tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="print-footer">
+      <span>عدد الصفوف: <strong>${esc(String(card.totals.row_count))}</strong></span>
+      <span>إجمالي الوزن: <strong>${esc(_fmt(card.totals.weight))}</strong></span>
+      <span>إجمالي السعر الكلي: <strong>${card.totals.total_price === null ? '—' : esc(_fmt(card.totals.total_price))}</strong></span>
+    </div>`;
 }
 
-function _renderOfficeCards(bolsaCards = []) {
-  return _renderOfficeBolsaCards(bolsaCards)
-    || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذا العميل</div>';
+async function _printOfficeBolsaForm(formId) {
+  const username = _moduleSessionUsername();
+  const office = _detailsOfficeId
+    ? await OfficesModule.getOfficeDetails(_detailsOfficeId)
+    : null;
+  if (!office) throw new Error('تعذر العثور على العميل الحالي لطباعة النموذج.');
+
+  const form = await FinancialService.getBolsaForm(username, formId);
+  if (!form) {
+    await _refreshOfficeBolsaCards();
+    throw new Error('لم يعد نموذج البوالص موجودًا أو تم حذفه.');
+  }
+
+  const officeName = String(office.name || '').trim().toLowerCase();
+  const card = _buildOfficeBolsaFormCard(form, String(office.id), officeName);
+  if (!card) {
+    await _refreshOfficeBolsaCards();
+    throw new Error('لا توجد صفوف لهذا العميل في نموذج البوالص.');
+  }
+
+  const { printHTML, buildPrintDocument, _escPrint } = await import('./printEngine.js');
+  const body = _buildOfficeBolsaPrintBody(card, office, _escPrint);
+  printHTML(buildPrintDocument({
+    title: `تسجيل البوالص — ${card.bolsa_date || ''}`,
+    body,
+    orientation: 'landscape',
+  }), { id: 'office-bolsa-card-print-iframe' });
+}
+
+async function _deleteOfficeBolsaForm(formId) {
+  const username = _moduleSessionUsername();
+  const office = _detailsOfficeId
+    ? await OfficesModule.getOfficeDetails(_detailsOfficeId)
+    : null;
+  if (!office) throw new Error('تعذر العثور على العميل الحالي لحذف النموذج.');
+
+  const form = await FinancialService.getBolsaForm(username, formId);
+  if (!form) {
+    await _refreshOfficeBolsaCards();
+    throw new Error('لم يعد نموذج البوالص موجودًا أو تم حذفه.');
+  }
+
+  const officeId = String(office.id);
+  const officeName = String(office.name || '').trim().toLowerCase();
+  const isShared = (Array.isArray(form.rows) ? form.rows : [])
+    .some((row) => _bolsaRowBelongsToOtherOffice(row, officeId, officeName));
+
+  const confirmation = isShared
+    ? 'هذا نموذج مشترك. سيتم حذف نموذج تسجيل البوالص الأصلي بالكامل، بما في ذلك صفوف جميع العملاء الموجودين فيه، وسيتم تنفيذ العكس المالي الحالي المرتبط بالمبلغ على المندوب والخزنة. هل تريد المتابعة؟'
+    : 'سيتم حذف نموذج تسجيل البوالص هذا بالكامل. هل تريد المتابعة؟';
+  if (!confirm(confirmation)) return;
+
+  await FinancialService.deleteBolsaForm(username, formId);
+  await _refreshOfficeBolsaCards();
 }
 
 async function _renderDetailsContent(office) {
@@ -1221,7 +1495,7 @@ async function _renderDetailsContent(office) {
 
   if (_activeDetailsTab === 'cards') {
     content.innerHTML = '<div style="text-align:center;padding:24px;color:#9ca3af;">جاري التحميل...</div>';
-    const bolsaCardsData = await _getOfficeBolsaCards(office);
+    const bolsaCardsData = await _getOfficeBolsaFormCards(office);
     content.innerHTML = _renderOfficeCards(bolsaCardsData);
   }
 }
@@ -1487,7 +1761,38 @@ function attachOfficesPageListeners() {
       return;
     }
 
+    const bolsaActionButton = target.closest(
+      '[data-action="edit-bolsa"], [data-action="print-bolsa"], [data-action="delete-bolsa"]'
+    );
+    if (bolsaActionButton?.closest('#officeDetailsContent')) {
+      const action = bolsaActionButton.dataset.action;
+      const formId = String(bolsaActionButton.dataset.id || '');
+      if (!formId || _officeBolsaActionInFlight.has(formId)) return;
 
+      _officeBolsaActionInFlight.add(formId);
+      bolsaActionButton.disabled = true;
+      try {
+        if (action === 'edit-bolsa') {
+          await _editOfficeBolsaForm(formId);
+        } else if (action === 'print-bolsa') {
+          await _printOfficeBolsaForm(formId);
+        } else if (action === 'delete-bolsa') {
+          await _deleteOfficeBolsaForm(formId);
+        }
+      } catch (err) {
+        console.error('[offices:bolsa-card]', err);
+        const fallback = action === 'edit-bolsa'
+          ? 'حدث خطأ أثناء فتح تعديل نموذج البوالص.'
+          : action === 'print-bolsa'
+            ? 'حدث خطأ أثناء طباعة نموذج البوالص.'
+            : 'حدث خطأ أثناء حذف نموذج البوالص.';
+        alert(err?.message || fallback);
+      } finally {
+        _officeBolsaActionInFlight.delete(formId);
+        if (bolsaActionButton.isConnected) bolsaActionButton.disabled = false;
+      }
+      return;
+    }
 
     if (target.closest('[data-action="office-print"]')) {
       if (_detailsOfficeId) {
