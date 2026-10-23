@@ -159,6 +159,8 @@ function _normalizeBolsaRow(r) {
     return Number.isFinite(n) ? n : 0;
   };
   const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
+  const weight = num(r?.weight);
+  const price = num(r?.price);
   return {
     _rowId:     str(r?._rowId),
     kartaNo:    str(r?.kartaNo),
@@ -166,7 +168,7 @@ function _normalizeBolsaRow(r) {
     driver:     str(r?.driver),
     owner_name: str(r?.owner_name),
     carNo:      str(r?.carNo),
-    weight:     num(r?.weight),
+    weight,
     weight2:    num(r?.weight2),
     office:     str(r?.office),
     office_id:  null,
@@ -174,7 +176,10 @@ function _normalizeBolsaRow(r) {
     direction:  str(r?.direction),
     type:       str(r?.type),
     ohda:       num(r?.ohda),
+    // Preserve the legacy freight-rate field separately from price.
     noloon:     num(r?.noloon),
+    price,
+    total_price: Money.round(weight * price),
   };
 }
 
@@ -1122,9 +1127,7 @@ async function createOfficeDeposit(username, data) {
     throw new Error('[FinancialService:createOfficeDeposit] date must be a valid ISO date string.');
   }
 
-  const note = typeof data.note === 'string' && data.note.trim()
-    ? data.note.trim()
-    : 'إيداع رصيد';
+  const note = 'إيداع مبلغ';
 
   const referenceId = _uuid();
   const [entry] = await DB.transaction(async (tx) => {

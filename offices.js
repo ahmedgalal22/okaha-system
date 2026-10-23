@@ -337,7 +337,7 @@ function _calcReceiptNet(row) {
 }
 
 function _calcBolsaNet(row) {
-  const total = Number(row.total);
+  const total = Number(row.total_price ?? row.total);
   if (Number.isFinite(total)) return total;
   const w = (Number(row.weight) || 0) + (Number(row.weight2) || 0);
   const price = Number(row.price) || 0;
@@ -608,6 +608,7 @@ let _editingOfficeDraft = null;
 let _activeDetailsTab = 'balance';
 let _detailsOfficeId = null;
 let _hamolaEditId = null;
+let _isOfficeDepositSaving = false;
 const LAST_PAGE_CTX_KEY = 'financial_last_page_ctx';
 
 function _requireSession() {
@@ -855,10 +856,6 @@ function _renderOfficeDepositModal() {
             <label class="label mb-1" for="officeDepositAmount">المبلغ</label>
             <input id="officeDepositAmount" type="number" step="0.01" min="0" class="input input-sm" />
           </div>
-          <div>
-            <label class="label mb-1" for="officeDepositNote">ملاحظة</label>
-            <input id="officeDepositNote" type="text" class="input input-sm" />
-          </div>
         </div>
 
         <div class="flex gap-2">
@@ -915,7 +912,7 @@ function _renderOfficeBalance(entries) {
         <td>${entryTypeLabel(entry)}</td>
         <td>${delta < 0 ? '-' : ''}${_fmt(Math.abs(delta))}</td>
         <td>${_fmt(balance)}</td>
-        <td>${_text(entry.reference_number || entry.reference_id || '-')}</td>
+        <td>${_text(entry.type === 'OFFICE_DEPOSIT' ? (entry.note || entry.reference_number || entry.reference_id || '-') : (entry.reference_number || entry.reference_id || '-'))}</td>
       </tr>
     `).join('')
     : `<tr><td colspan="5" class="text-center text-muted p-4">لا توجد حركات</td></tr>`;
@@ -927,7 +924,7 @@ function _renderOfficeBalance(entries) {
         <p class="text-2xl font-bold ${currentClass}">${_fmt(currentBalance)}</p>
       </div>
       <div class="flex gap-2">
-        <button type="button" data-action="office-deposit-open" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">💰 إيداع / سحب</button>
+        <button type="button" data-action="office-deposit-open" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">💰 إيداع رصيد</button>
       </div>
     </div>
     <div class="table-wrapper">
@@ -979,37 +976,11 @@ async function _computeWeightMap(office) {
   return weightMap;
 }
 
-/**
- * Attach auto-save for inline price inputs in hamola table
- */
-function _attachPriceSaveListeners(office) {
-  const inputs = document.querySelectorAll('.hamola-price-input');
-  inputs.forEach(inp => {
-    inp.addEventListener('change', async function() {
-      const rowId = this.dataset.hamolaId;
-      const price = parseFloat(this.value) || 0;
-      try {
-        await OfficesModule.updateHamolaRow(office.id, rowId, { price });
-        // Re-render to update total prices
-        const updatedOffice = await OfficesModule.getOfficeDetails(office.id);
-        await _renderDetailsContent(updatedOffice);
-      } catch (err) {
-        console.error('[hamola] price save failed:', err);
-      }
-    });
-  });
-}
-
 function _renderHamolaTable(rows, weightMap = {}) {
-  let grandTotalPrice = 0;
-
   const body = rows.length
     ? rows.map((r) => {
         const key = String(r.loading_place || '').trim().toLowerCase() + '__' + String(r.destination_place || '').trim().toLowerCase();
         const weight = weightMap[key] || 0;
-        const price = Number(r.price) || 0;
-        const totalPrice = weight * price;
-        grandTotalPrice += totalPrice;
         return `
       <tr>
         <td>${_text(r.loading_place)}</td>
@@ -1020,24 +991,14 @@ function _renderHamolaTable(rows, weightMap = {}) {
           <button type="button" data-action="hamola-edit" data-id="${r.id}" class="btn-icon" title="تعديل" style="background:#dbeafe;color:#2563eb;width:28px;height:28px;border:none;border-radius:6px;cursor:pointer;">✏️</button>
           <button type="button" data-action="hamola-delete" data-id="${r.id}" class="btn-icon" title="حذف" style="background:#fee2e2;color:#dc2626;width:28px;height:28px;border:none;border-radius:6px;cursor:pointer;">🗑️</button>
         </td>
-        <td>
-          <input type="number" step="0.01" min="0" class="input input-sm hamola-price-input"
-            data-hamola-id="${r.id}" value="${price || ''}"
-            style="width:80px;text-align:center;"
-            placeholder="السعر">
-        </td>
-        <td class="font-semibold">${_fmt(totalPrice)}</td>
       </tr>`;
       }).join('')
-    : `<tr><td colspan="7" class="text-center text-muted p-6" style="color:#94a3b8;">لا توجد بيانات — اضغط إضافة حمولة</td></tr>`;
+    : `<tr><td colspan="5" class="text-center text-muted p-6" style="color:#94a3b8;">لا توجد بيانات — اضغط إضافة حمولة</td></tr>`;
 
   return `
     <div class="flex justify-between items-center flex-wrap gap-3 mb-4">
       <h3 class="text-xl font-bold text-gray-800">قائمة أماكن التحميل والتعتيق</h3>
       <div class="flex items-center gap-3 flex-wrap">
-        <div style="background:linear-gradient(135deg,#1e40af,#3b82f6);color:#fff;padding:8px 16px;border-radius:10px;font-weight:700;font-size:0.875rem;">
-          إجمالي السعر الكلي: <span id="hamolaGrandTotal">${_fmt(grandTotalPrice)}</span>
-        </div>
         <button type="button" data-action="hamola-add" style="background:#16a34a;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">➕ إضافة حمولة</button>
       </div>
     </div>
@@ -1050,8 +1011,6 @@ function _renderHamolaTable(rows, weightMap = {}) {
             <th style="color:#fff;">الوزن</th>
             <th style="color:#fff;">النولون</th>
             <th style="color:#fff;">إجراءات</th>
-            <th style="color:#fff;">السعر</th>
-            <th style="color:#fff;">السعر الكلي</th>
           </tr>
         </thead>
         <tbody>${body}</tbody>
@@ -1258,7 +1217,6 @@ async function _renderDetailsContent(office) {
   if (_activeDetailsTab === 'hamola') {
     const weightMap = await _computeWeightMap(office);
     content.innerHTML = _renderHamolaTable(office.hamolaRows || [], weightMap);
-    _attachPriceSaveListeners(office);
   }
 
   if (_activeDetailsTab === 'cards') {
@@ -1315,9 +1273,9 @@ function _openOfficeDepositModal() {
   const msg = document.getElementById('officeDepositMsg');
   if (msg) { msg.textContent = ''; msg.classList.remove('is-visible'); }
   const amountEl = document.getElementById('officeDepositAmount');
-  const noteEl = document.getElementById('officeDepositNote');
   if (amountEl) amountEl.value = '';
-  if (noteEl) noteEl.value = '';
+  const saveBtn = document.querySelector('[data-action="office-deposit-save"]');
+  if (saveBtn) saveBtn.disabled = _isOfficeDepositSaving;
   modal?.classList.remove('hidden');
 }
 
@@ -1326,11 +1284,12 @@ function _closeOfficeDepositModal() {
 }
 
 async function _saveOfficeDeposit() {
+  if (_isOfficeDepositSaving) return;
+
   const msg = document.getElementById('officeDepositMsg');
   if (msg) { msg.textContent = ''; msg.classList.remove('is-visible'); }
 
   const amountVal = parseFloat(document.getElementById('officeDepositAmount')?.value) || 0;
-  const note = document.getElementById('officeDepositNote')?.value || '';
 
   if (!_detailsOfficeId) {
     if (msg) {
@@ -1340,7 +1299,7 @@ async function _saveOfficeDeposit() {
     return;
   }
 
-  if (amountVal <= 0) {
+  if (Money.toCents(amountVal) <= 0) {
     if (msg) {
       msg.textContent = 'المبلغ مطلوب ويجب أن يكون أكبر من صفر';
       msg.classList.add('is-visible');
@@ -1348,24 +1307,19 @@ async function _saveOfficeDeposit() {
     return;
   }
 
-  try {
-    const depositFn = typeof OfficesModule.depositToOffice === 'function'
-      ? OfficesModule.depositToOffice
-      : OfficesModule.adjustOfficeBalance;
+  const saveBtn = document.querySelector('[data-action="office-deposit-save"]');
+  _isOfficeDepositSaving = true;
+  if (saveBtn) saveBtn.disabled = true;
 
-    if (typeof depositFn !== 'function') {
+  try {
+    if (typeof OfficesModule.depositToOffice !== 'function') {
       throw new Error('Office deposit handler is not available');
     }
 
-    await depositFn(_detailsOfficeId, {
+    await OfficesModule.depositToOffice(_detailsOfficeId, {
       amount: amountVal,
-      note: note.trim() || null,
+      note: 'إيداع مبلغ',
       date: new Date().toISOString().split('T')[0],
-      type: 'deposit',
-      client_id: _detailsOfficeId,
-      client_type: 'office',
-      entity_id: _detailsOfficeId,
-      entity_type: 'office',
     });
 
     _closeOfficeDepositModal();
@@ -1376,6 +1330,9 @@ async function _saveOfficeDeposit() {
       msg.textContent = err.message || 'حدث خطأ أثناء الإيداع';
       msg.classList.add('is-visible');
     }
+  } finally {
+    _isOfficeDepositSaving = false;
+    if (saveBtn) saveBtn.disabled = false;
   }
 }
 

@@ -152,7 +152,7 @@ const BolsaModule = Object.freeze({
 const COLS = [
   'رقم الكارتة', 'التاريخ', 'صاحب المركبة', 'اسم السائق', 'رقم المركبة',
   'الوزن', 'اسم العميل', 'التحميل', 'الجهة', 'النوع',
-  'العهدة', 'نولون', 'إجراءات',
+  'العهدة', 'السعر', 'السعر الكلي', 'إجراءات',
 ];
 
 const BOLSA_ARROW_ROW_ID = 'bolsaFillArrowRow';
@@ -168,7 +168,8 @@ const BOLSA_FILL_COLS = [
   'bolsa-direction',
   'bolsa-type',
   'bolsa-ohda',
-  'bolsa-noloon',
+  'bolsa-price',
+  null,
   null,
 ];
 
@@ -186,7 +187,7 @@ const BOLSA_ENTER_NAV_ORDER = [
   'bolsa-direction',
   'bolsa-type',
   'bolsa-ohda',
-  'bolsa-noloon',
+  'bolsa-price',
 ];
 
 function _currentUsername() {
@@ -490,7 +491,8 @@ function _render() {
               <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">الجهة</th>
               <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">النوع</th>
               <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">العهدة</th>
-              <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">نولون</th>
+              <th class="text-center whitespace-nowrap" style="min-width:55px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">السعر</th>
+              <th class="text-center whitespace-nowrap" style="min-width:65px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">السعر الكلي</th>
               <th class="text-center whitespace-nowrap" style="min-width:30px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">حذف</th>
             </tr>
           </thead>
@@ -596,8 +598,11 @@ function _rowTemplate() {
     <td class="px-1 py-1" style="min-width:45px;">
       ${inp('bolsa-ohda', 'type="number" step="0.01" min="0"')}
     </td>
-    <td class="px-1 py-1" style="min-width:45px;">
-      ${inp('bolsa-noloon', 'type="number" step="0.01" min="0" value="0"')}
+    <td class="px-1 py-1" style="min-width:55px;">
+      ${inp('bolsa-price', 'type="number" step="0.01" min="0" value="0"')}
+    </td>
+    <td class="px-1 py-1" style="min-width:65px;">
+      ${inp('bolsa-total-price', 'type="number" step="0.01" min="0" value="0" readonly tabindex="-1" aria-label="السعر الكلي"')}
     </td>
     <td class="px-1 py-1 text-center" style="min-width:30px;">
       <button type="button" data-action="bolsa-remove-row"
@@ -620,6 +625,20 @@ function _setMsg(tr, key, text, kind = 'error') {
   el.classList.toggle('is-visible', Boolean(text));
 }
 
+function _calcBolsaTotalPrice(weight, price) {
+  return Money.round(_num(weight) * _num(price));
+}
+
+function _updateBolsaRowTotalPrice(tr) {
+  const totalPrice = _calcBolsaTotalPrice(
+    tr?.querySelector('.bolsa-weight')?.value,
+    tr?.querySelector('.bolsa-price')?.value
+  );
+  const totalEl = tr?.querySelector('.bolsa-total-price');
+  if (totalEl) totalEl.value = _fmt(totalPrice);
+  return totalPrice;
+}
+
 function _collectRow(tr) {
   const v = (cls) => tr.querySelector('.' + cls)?.value ?? '';
   // Phase 2 TASK G — preserve legacy weight2.
@@ -630,6 +649,8 @@ function _collectRow(tr) {
   // For fresh rows tr.dataset.legacyWeight2 is undefined → defaults to 0.
   const legacyW2 = Number(tr.dataset.legacyWeight2);
   const weight2  = Number.isFinite(legacyW2) ? legacyW2 : 0;
+  const weight = _num(v('bolsa-weight'));
+  const price = _num(v('bolsa-price'));
 
   return {
     _rowId: String(tr.dataset.rowId || '').trim(),
@@ -638,14 +659,19 @@ function _collectRow(tr) {
     driver: String(v('bolsa-driver')).trim(),
     owner_name: String(v('bolsa-owner')).trim(),
     carNo: String(v('bolsa-car')).trim(),
-    weight: _num(v('bolsa-weight')),
+    weight,
     weight2,
     office: String(v('bolsa-office')).trim(),
     loading: String(v('bolsa-loading')).trim(),
     direction: String(v('bolsa-direction')).trim(),
     type: String(v('bolsa-type')).trim(),
     ohda: _num(v('bolsa-ohda')),
-    noloon: _num(v('bolsa-noloon')),
+    // Keep the legacy freight-rate field distinct from the new unit price.
+    // It is no longer an editable column, but remains available to the
+    // existing cargo synchronization and to preloaded Bolsa records.
+    noloon: _num(tr.dataset.noloon),
+    price,
+    total_price: _calcBolsaTotalPrice(weight, price),
   };
 }
 
@@ -654,6 +680,7 @@ function _recalcTotals() {
   let ohda = 0;
   let totalWeight = 0;
   trs.forEach(tr => {
+    _updateBolsaRowTotalPrice(tr);
     ohda        += _num(tr.querySelector('.bolsa-ohda')?.value);
     totalWeight += _num(tr.querySelector('.bolsa-weight')?.value);
   });
@@ -689,7 +716,7 @@ let _bolsaRowDatalistCounter = 0;
  *
  * Wires the office input to populate the row's loading + direction + type
  * datalists from the chosen office's hamolaRows, then auto-fills
- * noloon + type when the user picks a loading/direction combo that
+ * price + legacy noloon + type when the user picks a loading/direction combo that
  * matches a hamola entry.
  *
  * KEY DESIGN POINTS:
@@ -778,10 +805,15 @@ function _bindRowOffice(tr) {
     );
     if (!match) return;
 
-    const noloonInp = tr.querySelector('.bolsa-noloon');
     const noloonVal = Number(match.nolon ?? match.noloon);
-    if (noloonInp && Number.isFinite(noloonVal)) {
-      noloonInp.value = String(noloonVal);
+    if (Number.isFinite(noloonVal)) {
+      tr.dataset.noloon = String(noloonVal);
+    }
+
+    const priceInp = tr.querySelector('.bolsa-price');
+    const priceVal = Number(match.price);
+    if (priceInp && Number.isFinite(priceVal)) {
+      priceInp.value = String(priceVal);
     }
 
     const typeVal = String(match.item_type ?? match.type ?? '').trim();
@@ -977,8 +1009,9 @@ function _addRow() {
   });
   tr.querySelector('.bolsa-owner')?.addEventListener('change', () => _bolsaLinkOwnerToCar(tr));
 
-  ['bolsa-weight', 'bolsa-ohda'].forEach(cls => {
+  ['bolsa-weight', 'bolsa-ohda', 'bolsa-price'].forEach(cls => {
     tr.querySelector('.' + cls)?.addEventListener('input', () => {
+      _updateBolsaRowTotalPrice(tr);
       _recalcTotals();
     });
   });
@@ -1077,7 +1110,9 @@ function _hydrateBolsaRows(rows) {
     set('bolsa-direction', rowData.direction);
     set('bolsa-type', rowData.type);
     set('bolsa-ohda', rowData.ohda);
-    set('bolsa-noloon', rowData.noloon);
+    if (rowData.noloon != null) tr.dataset.noloon = String(rowData.noloon);
+    set('bolsa-price', rowData.price ?? 0);
+    _updateBolsaRowTotalPrice(tr);
 
     const officeInp = tr.querySelector('.bolsa-office');
     if (officeInp?.value) officeInp.dispatchEvent(new Event('change'));
