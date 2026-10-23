@@ -9,7 +9,6 @@ import { AgentsService } from './entities.js';
 import { OfficesService } from './offices.js';
 import { AuthModule } from './auth.js';
 import { Money } from './money.js';
-import { ExcelService } from './excelService.js';
 
 
 // ========================================
@@ -35,8 +34,8 @@ function _uuid() {
  * saveBolsaForm — thin orchestration layer over FinancialService.
  *
  * ARCHITECTURE NOTE (Phase 1 refactor):
- *   All integrity rules (owner whitelist, intra-form karta uniqueness,
- *   global karta uniqueness, row normalization, total calculation) now
+ *   All integrity rules (owner whitelist, row normalization, total
+ *   calculation) now
  *   live INSIDE FinancialService and run within the DB transaction.
  *   This layer only:
  *     - validates the page-level fields the service needs (date, agent)
@@ -143,7 +142,7 @@ const BolsaModule = Object.freeze({
 
 /**
  * bolsa-page.js
- * تفريغ البوالص — مصدر بيانات النقل.
+ * تسجيل البوالص — مصدر بيانات النقل.
  *
  * ملاحظة: هذه الصفحة لا تكتب مباشرة في DB إلا عبر BolsaFormsService.
  */
@@ -151,14 +150,13 @@ const BolsaModule = Object.freeze({
 
 
 const COLS = [
-  'رقم الكارتة', 'التاريخ', 'اسم السائق', 'صاحب المركبة', 'رقم المركبة',
+  'التاريخ', 'اسم السائق', 'صاحب المركبة', 'رقم المركبة',
   'وزن وش', 'اسم الشركة', 'التحميل', 'الجهة', 'النوع',
-  'العهدة', 'اكرامية', 'نولون', 'سولار', 'ملاحظات', 'إجراءات',
+  'العهدة', 'نولون', 'إجراءات',
 ];
 
 const BOLSA_ARROW_ROW_ID = 'bolsaFillArrowRow';
 const BOLSA_FILL_COLS = [
-  'bolsa-karta',
   'bolsa-rowdate',
   'bolsa-driver',
   'bolsa-owner',
@@ -169,17 +167,13 @@ const BOLSA_FILL_COLS = [
   'bolsa-direction',
   'bolsa-type',
   'bolsa-ohda',
-  'bolsa-dokhan',
   'bolsa-noloon',
-  'bolsa-solar',
-  'bolsa-notes',
   null,
 ];
 
 let _editingBolsaFormId = null;
 
 const BOLSA_ENTER_NAV_ORDER = [
-  'bolsa-karta',
   'bolsa-rowdate',
   'bolsa-driver',
   'bolsa-owner',
@@ -190,9 +184,7 @@ const BOLSA_ENTER_NAV_ORDER = [
   'bolsa-direction',
   'bolsa-type',
   'bolsa-ohda',
-  'bolsa-dokhan',
   'bolsa-noloon',
-  'bolsa-solar',
 ];
 
 function _currentUsername() {
@@ -435,9 +427,7 @@ function _render() {
   if (!page) return;
 
   page.innerHTML = `
-    <div class="bg-white rounded-t-xl shadow-lg p-6 pb-0"></div>
-
-    <div class="bg-white shadow-lg p-6 pt-4">
+    <div class="bg-white rounded-t-xl shadow-lg p-6 pt-4">
       <div class="flex items-center justify-between mb-4">
         <h3 class="text-xl font-bold text-gray-800">جدول البوالص</h3>
         <div style="display:flex; gap:16px; align-items:flex-end;">
@@ -484,7 +474,6 @@ function _render() {
           style="table-layout:auto; width:100%; border-collapse:collapse;">
           <thead style="background: linear-gradient(to right, #0f766e, #0d9488); position:sticky; top:0; z-index:10;" class="text-white">
             <tr>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:50px;font-size:10px;">رقم الكارتة</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:55px;font-size:10px;">التاريخ</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:70px;font-size:10px;">اسم السائق</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">صاحب المركبة</th>
@@ -495,10 +484,7 @@ function _render() {
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">الجهة</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">النوع</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">العهدة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">اكرامية</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">نولون</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">سولار</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:70px;font-size:10px;">ملاحظات</th>
               <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:30px;font-size:10px;">حذف</th>
             </tr>
           </thead>
@@ -516,10 +502,6 @@ function _render() {
           <p class="text-xs opacity-90 mb-1" style="color:#fff">إجمالي الوزن</p>
           <p class="text-xl font-bold" style="color:#fff" id="bolsaTotalWeight">0.00</p>
         </div>
-        <div class="flex-1 min-w-[90px] p-3 rounded-lg text-white" style="background:linear-gradient(135deg,#f97316,#ea580c)">
-          <p class="text-xs opacity-90 mb-1" style="color:#fff">إجمالي الإكرامية</p>
-          <p class="text-xl font-bold" style="color:#fff" id="bolsaTotalDokhan">0.00</p>
-        </div>
         <div class="flex-1 min-w-[90px] p-3 rounded-lg text-white" style="background:linear-gradient(135deg,#16a34a,#15803d)">
           <p class="text-xs opacity-90 mb-1" style="color:#fff">إضافة</p>
           <input type="number" id="bolsaAddition" value="0" min="0" step="0.01"
@@ -528,10 +510,6 @@ function _render() {
         <div class="flex-1 min-w-[90px] p-3 rounded-lg text-white" style="background:linear-gradient(135deg,#dc2626,#b91c1c)">
           <p class="text-xs opacity-90 mb-1" style="color:#fff">الإجمالي الكلي</p>
           <p class="text-xl font-bold" style="color:#fff" id="bolsaGrandTotal">0.00</p>
-        </div>
-        <div class="flex-1 min-w-[90px] p-3 rounded-lg text-white" style="background:linear-gradient(135deg,#0ea5e9,#0284c7)">
-          <p class="text-xs opacity-90 mb-1" style="color:#fff">إجمالي السولار</p>
-          <p class="text-xl font-bold" style="color:#fff" id="bolsaTotalSolar">0.00</p>
         </div>
       </div>
 
@@ -564,24 +542,6 @@ function _render() {
           </svg>
           إضافة 4 صفوف
         </button>
-        <button type="button" data-action="bolsa-export-excel"
-          class="bg-teal-700 hover:bg-teal-800 text-white px-4 py-3 rounded-lg transition flex items-center gap-2"
-          title="تصدير صفوف البوالص إلى Excel">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          📤 تصدير Excel
-        </button>
-        <button type="button" data-action="bolsa-import-excel"
-          class="bg-violet-600 hover:bg-violet-700 text-white px-4 py-3 rounded-lg transition flex items-center gap-2"
-          title="استيراد صفوف من Excel">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12"/>
-          </svg>
-          📥 استيراد Excel
-        </button>
       </div>
     </div>
   `;
@@ -595,11 +555,6 @@ function _rowTemplate() {
     `<div class="row-msg row-msg-${key} field-msg-inline field-msg-inline--error" role="alert"></div>`;
 
   return `
-    <td class="px-1 py-1" style="min-width:50px;">
-      ${inp('bolsa-karta', 'type="text"')}
-      ${msgErr('karta')}
-      ${msgErr('karta-dup')}
-    </td>
     <td class="px-1 py-1" style="min-width:55px;">
       ${inp('bolsa-rowdate', 'type="text" placeholder="يوم/شهر"')}
     </td>
@@ -633,16 +588,7 @@ function _rowTemplate() {
       ${inp('bolsa-ohda', 'type="number" step="0.01" min="0"')}
     </td>
     <td class="px-1 py-1" style="min-width:45px;">
-      ${inp('bolsa-dokhan', 'type="number" step="0.01" min="0"')}
-    </td>
-    <td class="px-1 py-1" style="min-width:45px;">
       ${inp('bolsa-noloon', 'type="number" step="0.01" min="0" value="0"')}
-    </td>
-    <td class="px-1 py-1" style="min-width:45px;">
-      ${inp('bolsa-solar', 'type="number" step="0.01" min="0" value="0"')}
-    </td>
-    <td class="px-1 py-1" style="min-width:70px;">
-      ${inp('bolsa-notes', 'type="text"')}
     </td>
     <td class="px-1 py-1 text-center" style="min-width:30px;">
       <button type="button" data-action="bolsa-remove-row"
@@ -677,7 +623,6 @@ function _collectRow(tr) {
   const weight2  = Number.isFinite(legacyW2) ? legacyW2 : 0;
 
   return {
-    kartaNo: String(v('bolsa-karta')).trim(),
     rowdate: String(v('bolsa-rowdate')).trim(),
     driver: String(v('bolsa-driver')).trim(),
     owner_name: String(v('bolsa-owner')).trim(),
@@ -689,59 +634,32 @@ function _collectRow(tr) {
     direction: String(v('bolsa-direction')).trim(),
     type: String(v('bolsa-type')).trim(),
     ohda: _num(v('bolsa-ohda')),
-    dokhan: _num(v('bolsa-dokhan')),
     noloon: _num(v('bolsa-noloon')),
-    solar: _num(v('bolsa-solar')),
-    notes: String(v('bolsa-notes')).trim(),
   };
 }
 
 function _recalcTotals() {
   const trs = _bolsaDataRows();
   let ohda = 0;
-  let dokhan = 0;
   let totalWeight = 0;
-  let totalSolar = 0;
   trs.forEach(tr => {
-    ohda       += _num(tr.querySelector('.bolsa-ohda')?.value);
-    dokhan     += _num(tr.querySelector('.bolsa-dokhan')?.value);
+    ohda        += _num(tr.querySelector('.bolsa-ohda')?.value);
     totalWeight += _num(tr.querySelector('.bolsa-weight')?.value);
-    totalSolar += _num(tr.querySelector('.bolsa-solar')?.value);
   });
 
-  const rc  = document.getElementById('bolsaRowCount');
-  const tw  = document.getElementById('bolsaTotalWeight');
-  const dk  = document.getElementById('bolsaTotalDokhan');
-  const so  = document.getElementById('bolsaTotalSolar');
-  const gt  = document.getElementById('bolsaGrandTotal');
+  const rc    = document.getElementById('bolsaRowCount');
+  const tw    = document.getElementById('bolsaTotalWeight');
+  const gt    = document.getElementById('bolsaGrandTotal');
   const addEl = document.getElementById('bolsaAddition');
   const addition = parseFloat(addEl?.value) || 0;
 
-  const grandTotal = ohda + dokhan + addition;
+  const grandTotal = ohda + addition;
 
-  if (rc)  rc.textContent  = trs.length;
-  if (tw)  tw.textContent  = _fmt(totalWeight);
-  if (dk)  dk.textContent  = _fmt(dokhan);
-  if (so)  so.textContent  = _fmt(totalSolar);
-  if (gt)  gt.textContent  = _fmt(grandTotal);
+  if (rc) rc.textContent = trs.length;
+  if (tw) tw.textContent = _fmt(totalWeight);
+  if (gt) gt.textContent = _fmt(grandTotal);
 }
 
-function _highlightDuplicateKartas() {
-  const trs = _bolsaDataRows();
-  const counts = new Map();
-  trs.forEach(tr => {
-    const k = String(tr.querySelector('.bolsa-karta')?.value || '').trim();
-    if (!k) return;
-    counts.set(k, (counts.get(k) || 0) + 1);
-  });
-  trs.forEach(tr => {
-    const inp = tr.querySelector('.bolsa-karta');
-    const k = String(inp?.value || '').trim();
-    const dup = k && (counts.get(k) || 0) > 1;
-    if (inp) inp.classList.toggle('input-error', dup);
-    _setMsg(tr, 'karta-dup', dup ? '❌ رقم الكارتة مكرر داخل الجدول' : '', 'error');
-  });
-}
 
 /**
  * Per-row counter used to generate STABLE, UNIQUE datalist IDs.
@@ -1011,10 +929,6 @@ function _addRow() {
   }
 
   // per-row listeners
-  tr.querySelector('.bolsa-karta')?.addEventListener('input', () => {
-    _setMsg(tr, 'karta', '', 'error');
-    _highlightDuplicateKartas();
-  });
   tr.querySelector('.bolsa-owner')?.addEventListener('input', () => {
     _setMsg(tr, 'owner', '', 'error');
     const oex = tr.querySelector('.row-msg-owner-exists');
@@ -1038,7 +952,7 @@ function _addRow() {
   });
   tr.querySelector('.bolsa-owner')?.addEventListener('change', () => _bolsaLinkOwnerToCar(tr));
 
-  ['bolsa-weight', 'bolsa-ohda', 'bolsa-dokhan', 'bolsa-solar'].forEach(cls => {
+  ['bolsa-weight', 'bolsa-ohda'].forEach(cls => {
     tr.querySelector('.' + cls)?.addEventListener('input', () => {
       _recalcTotals();
     });
@@ -1048,7 +962,6 @@ function _addRow() {
   _attachBolsaKeyboardNav(tr);
   _ensureArrowRow();
   _recalcTotals();
-  _highlightDuplicateKartas();
 }
 
 async function _loadOwnersDatalist() {
@@ -1118,7 +1031,6 @@ function _hydrateBolsaRows(rows) {
       const el = tr.querySelector('.' + cls);
       if (el) el.value = value ?? '';
     };
-    set('bolsa-karta', rowData.kartaNo);
     set('bolsa-rowdate', rowData.rowdate);
     set('bolsa-driver', rowData.driver);
     set('bolsa-owner', rowData.owner_name);
@@ -1138,10 +1050,7 @@ function _hydrateBolsaRows(rows) {
     set('bolsa-direction', rowData.direction);
     set('bolsa-type', rowData.type);
     set('bolsa-ohda', rowData.ohda);
-    set('bolsa-dokhan', rowData.dokhan);
     set('bolsa-noloon', rowData.noloon);
-    set('bolsa-solar', rowData.solar);
-    set('bolsa-notes', rowData.notes);
   }
 }
 
@@ -1158,7 +1067,6 @@ async function loadBolsaForEdit(formData) {
   const addEl = document.getElementById('bolsaAddition');
   if (addEl) addEl.value = formData.totals?.addition ?? formData.addition ?? 0;
   _recalcTotals();
-  _highlightDuplicateKartas();
   _setBolsaSaveMode(true);
   _topError(null);
 }
@@ -1201,16 +1109,10 @@ async function _validateInline() {
 
   // per-row required fields
   for (const tr of dataRows) {
-    const karta = String(tr.querySelector('.bolsa-karta')?.value || '').trim();
     const owner = String(tr.querySelector('.bolsa-owner')?.value || '').trim();
-    _setMsg(tr, 'karta', karta ? '' : '❌ رقم الكارتة مطلوب', 'error');
     _setMsg(tr, 'owner', owner ? '' : '❌ اسم صاحب المركبة مطلوب', 'error');
-    if (!karta || !owner) ok = false;
+    if (!owner) ok = false;
   }
-
-  _highlightDuplicateKartas();
-  const hasDup = [...document.querySelectorAll('#bolsaTableBody .row-msg-karta-dup')].some(el => el.classList.contains('is-visible'));
-  if (hasDup) ok = false;
 
   return ok;
 }
@@ -1229,11 +1131,7 @@ async function _save() {
   const agent_id = String(document.getElementById('bolsaAgent')?.value || '').trim();
 
   const trs = _bolsaDataRows();
-  const rows = trs.map(_collectRow).map(r => ({
-    ...r,
-    used_in_receipt: false,
-    used_receipt_id: null,
-  }));
+  const rows = trs.map(_collectRow);
 
   const addition = parseFloat(document.getElementById('bolsaAddition')?.value) || 0;
 
@@ -1262,78 +1160,6 @@ async function _save() {
   }
 }
 
-// ─── EXCEL HANDLERS ───────────────────────────────────────────────────────────
-
-/**
- * Collects current bolsa table rows as plain objects and exports to Excel.
- * DOM read is valid here: the form has not been saved yet.
- */
-function _handleBolsaExcelExport() {
-  const trs = _bolsaDataRows();
-
-  if (trs.length === 0) {
-    alert('لا توجد صفوف بيانات للتصدير.');
-    return;
-  }
-
-  const rows = trs.map(tr => _collectRow(tr));
-
-  try {
-    ExcelService.exportBolsaRows(rows);
-  } catch (err) {
-    console.error('[bolsas] Excel export failed:', err);
-    alert(err.message || '❌ فشل تصدير Excel');
-  }
-}
-
-/**
- * Opens a file picker, imports bolsa rows from Excel, then fills the form.
- * Appends imported rows to any existing rows in the table.
- */
-function _handleBolsaExcelImport() {
-  ExcelService.openFilePicker(async (file) => {
-    try {
-      const importedRows = await ExcelService.importBolsaRows(file);
-
-      for (const rowData of importedRows) {
-        _addRow();
-        const trs = _bolsaDataRows();
-        const tr  = trs[trs.length - 1];
-        if (!tr) continue;
-
-        const setVal = (cls, val) => {
-          const el = tr.querySelector('.' + cls);
-          if (el) el.value = val ?? '';
-        };
-
-        setVal('bolsa-karta',     rowData.kartaNo    ?? '');
-        // BUG #3 fix: only overwrite the date when the Excel cell is non-empty.
-        // _addRow() already fills a default date from the main date field;
-        // setting an empty string here would erase that default.
-        if (rowData.rowdate) setVal('bolsa-rowdate', rowData.rowdate);
-        setVal('bolsa-driver',    rowData.driver     ?? '');
-        setVal('bolsa-owner',     rowData.owner_name ?? '');
-        setVal('bolsa-car',       rowData.carNo      ?? '');
-        setVal('bolsa-weight',    rowData.weight  !== 0 ? rowData.weight  : '');
-        setVal('bolsa-office',    rowData.office     ?? '');
-        setVal('bolsa-loading',   rowData.loading    ?? '');
-        setVal('bolsa-direction', rowData.direction  ?? '');
-        setVal('bolsa-type',      rowData.type       ?? '');
-        setVal('bolsa-ohda',      rowData.ohda    !== 0 ? rowData.ohda    : '');
-        setVal('bolsa-dokhan',    rowData.dokhan  !== 0 ? rowData.dokhan  : '');
-        setVal('bolsa-noloon',    rowData.noloon  !== 0 ? rowData.noloon  : '');
-        setVal('bolsa-solar',     rowData.solar   !== 0 ? rowData.solar   : '');
-        setVal('bolsa-notes',     rowData.notes      ?? '');
-      }
-
-      _recalcTotals();
-      alert(`✅ تم استيراد ${importedRows.length} صف بنجاح.`);
-    } catch (err) {
-      console.error('[bolsas] Excel import failed:', err);
-      alert(err.message || '❌ فشل استيراد Excel');
-    }
-  });
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1382,14 +1208,6 @@ function initBolsaPage() {
       _addRow(); _addRow(); _addRow(); _addRow();
       return;
     }
-    if (e.target.closest('[data-action="bolsa-export-excel"]')) {
-      _handleBolsaExcelExport();
-      return;
-    }
-    if (e.target.closest('[data-action="bolsa-import-excel"]')) {
-      _handleBolsaExcelImport();
-      return;
-    }
     if (e.target.closest('[data-action="bolsa-save"]')) {
       _save();
       return;
@@ -1405,8 +1223,7 @@ function initBolsaPage() {
     if (rm) {
       rm.closest('tr')?.remove();
       _recalcTotals();
-      _highlightDuplicateKartas();
-    }
+        }
   });
 
   window.addEventListener('owners:changed', () => _loadOwnersDatalist());

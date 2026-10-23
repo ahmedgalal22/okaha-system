@@ -7,13 +7,8 @@ import {
   renderReceiptSnapshotRowsHtml,
   DATA_COL_COUNT,
 } from './receipts.js';
-import { loadBolsaForEdit } from './bolsas.js';
-import { DB } from './database.js';
 import { printHTML, buildPrintDocument } from './printEngine.js';
-import { ExcelService } from './excelService.js';
 import { ReceiptRepository } from './services/receiptRepository.js';
-import { ClientRepository } from './services/clientRepository.js';
-import { DBProvider } from './services/dbProvider.js';
 
 const PAGE_ID = 'allReceiptsPage';
 const DATE_FMT = new Intl.DateTimeFormat('ar-EG', { dateStyle: 'full' });
@@ -25,10 +20,8 @@ const STATE = {
   ready: false,
   loading: false,
   receipts: [],
-  bolsas: [],
   filters: {
     receipts: createFilterState(),
-    bolsas: createFilterState(),
   },
 };
 
@@ -181,9 +174,7 @@ function normalizePersistedRow(row) {
   if (row._type === 'separator') return row;
   const hasSeparatorShape = row.vehicleName != null
     && row.subtotal != null
-    && !row.kartano
-    && !row.kartaNo
-    && !row.karta;
+    && !row.kartano;
   if (hasSeparatorShape) return { ...row, _type: 'separator' };
   return row;
 }
@@ -230,7 +221,7 @@ function rowMatchesReceiptFilters(row, record, filters) {
   }
 
   const hay = [
-    row.kartano, row.kartaNo, row.karta, row.date, row.rowdate,
+    row.kartano, row.date, row.rowdate,
     row.data, row.driver, row.owner_name, row.car, row.carNo,
     row.vehicle_plate, row.office, row.loading, row.direction, row.taktik,
     row.type, row.notes, row.noloon, row.ohda, row.net,
@@ -240,7 +231,7 @@ function rowMatchesReceiptFilters(row, record, filters) {
   if (owner && !rowContains(row.owner_name, owner) && !rowContains(record.owner_name || record.client_name, owner)) return false;
   if (company && !rowContains(row.office, company) && !rowContains(record.company_name, company)) return false;
   if (vehicle && !rowContains(row.car || row.carNo || row.vehicle_plate, vehicle)) return false;
-  if (karta && !rowContains(row.kartano || row.kartaNo || row.karta, karta)) return false;
+  if (karta && !rowContains(row.kartano, karta)) return false;
   if (typeFilter && !rowContains(row.type, typeFilter)) return false;
   return true;
 }
@@ -306,7 +297,7 @@ function getReceiptCardsFiltered() {
         record.company_name,
         record.notes,
         ...rows.map((row) => [
-          row.kartano, row.kartaNo, row.karta, row.carNo, row.car, row.vehicle_plate,
+          row.kartano, row.carNo, row.car, row.vehicle_plate,
           row.owner_name, row.office, row.loading, row.direction, row.taktik, row.notes,
           row.vehicleName, row.data, row.driver, row.date, row.rowdate, row.type,
           row.noloon, row.ohda, row.net, row.officeAmount, row.add,
@@ -319,7 +310,7 @@ function getReceiptCardsFiltered() {
       if (number && !rowContains(record.receipt_number, number)) return false;
       if (shipping && !rowContains(record.shipping_number, shipping)) return false;
       if (vehicle && !rowContains(record.vehicle_id, vehicle) && !rows.some((row) => rowContains(row.carNo || row.car || row.vehicle_plate, vehicle))) return false;
-      if (karta && !rows.some((row) => rowContains(row.kartaNo || row.kartano || row.karta, karta))) return false;
+      if (karta && !rows.some((row) => rowContains(row.kartano, karta))) return false;
       if (typeFilter && !rows.some((row) => rowContains(row.type, typeFilter))) return false;
       if (hasActiveRowFilters(filters)) {
         const visible = getDisplayRowsForReceipt(record, filters);
@@ -329,41 +320,6 @@ function getReceiptCardsFiltered() {
     });
 }
 
-function getBolsaCardsFiltered() {
-  const filters = STATE.filters.bolsas;
-  const global = String(filters.global || '').trim().toLowerCase();
-  const owner = String(filters.owner || '').trim().toLowerCase();
-  const company = String(filters.company || '').trim().toLowerCase();
-  const vehicle = String(filters.vehicle || '').trim().toLowerCase();
-  const karta = String(filters.karta || '').trim().toLowerCase();
-  const shipping = String(filters.shipping || '').trim().toLowerCase();
-  const agent = String(filters.agent || '').trim().toLowerCase();
-  const from = filters.from || '';
-  const to = filters.to || '';
-  const date = String(filters.date || '').trim();
-
-  return STATE.bolsas
-    .filter((record) => inRange(record.bolsa_date, from, to))
-    .filter((record) => !date || normalizeDate(record.bolsa_date) === normalizeDate(date))
-    .filter((record) => {
-      const rows = Array.isArray(record.rows) ? record.rows : [];
-      const haystack = [
-        record.bolsa_date,
-        record.agent_name,
-        record.agent_id,
-        record.totals?.grand_total,
-        ...rows.map((row) => [row.kartaNo, row.owner_name, row.carNo, row.office, row.loading, row.direction, row.notes, row.driver, row.rowdate, row.type, row.ohda, row.dokhan, row.noloon, row.solar].join(' ')),
-      ].join(' ').toLowerCase();
-
-      if (global && !haystack.includes(global)) return false;
-      if (agent && !rowContains(record.agent_name || record.agent_id, agent)) return false;
-      if (owner && !rows.some((row) => rowContains(row.owner_name, owner))) return false;
-      if (company && !rows.some((row) => rowContains(row.office, company))) return false;
-      if (vehicle && !rows.some((row) => rowContains(row.carNo, vehicle))) return false;
-      if (karta && !rows.some((row) => rowContains(row.kartaNo, karta))) return false;
-      return true;
-    });
-}
 
 function summarizeReceipts(records) {
   const filters = STATE.filters.receipts;
@@ -399,48 +355,11 @@ function summarizeReceipts(records) {
   }, { netDue: 0, netTotal: 0, paid: 0, count: 0, weight: 0, noloon: 0, ohda: 0 });
 }
 
-function summarizeBolsas(records) {
-  // FIX #6 — weight is NEVER persisted in totals.{weight,total_weight}.
-  // The source of truth is the per-row weight (+ legacy weight2) summed
-  // by getBolsaWeight(record), which is the same value rendered in the
-  // per-card footer.  Using it here keeps the summary bar and the
-  // per-card totals mathematically consistent.
-  //
-  // ohda / dokhan / grand_total ARE persisted in totals correctly, so we
-  // continue to read them from totals (fast, no row iteration).  This is
-  // also the only place where stored totals are checked against derived
-  // values — drift would have been invisible otherwise.
-  return records.reduce((acc, record) => {
-    const totals = record.totals || {};
-    acc.weight += getBolsaWeight(record);
-    acc.count += 1;
-    acc.ohda += toNumber(totals.ohda);
-    acc.dokhan += toNumber(totals.dokhan);
-    acc.solar += getBolsaSolar(record);
-    acc.grand += toNumber(totals.grand_total);
-    return acc;
-  }, { weight: 0, count: 0, ohda: 0, dokhan: 0, solar: 0, grand: 0 });
-}
 
-function getBolsaRows(record) {
-  return Array.isArray(record?.rows) ? record.rows : [];
-}
 
-function getBolsaWeight(record) {
-  return getBolsaRows(record).reduce((sum, row) => sum + toNumber(row.weight) + toNumber(row.weight2), 0);
-}
 
-function getBolsaOhda(record) {
-  return getBolsaRows(record).reduce((sum, row) => sum + toNumber(row.ohda), 0);
-}
 
-function getBolsaDokhan(record) {
-  return getBolsaRows(record).reduce((sum, row) => sum + toNumber(row.dokhan), 0);
-}
 
-function getBolsaSolar(record) {
-  return getBolsaRows(record).reduce((sum, row) => sum + toNumber(row.solar), 0);
-}
 
 function setFilterValue(tab, key, value) {
   STATE.filters[tab][key] = value;
@@ -473,11 +392,10 @@ function renderShell() {
       <div class="all-receipts-card">
 
         <div class="all-receipts-header">
-          <h2 class="all-receipts-title">جميع نماذج الصرف والتفريغ</h2>
-          <p class="all-receipts-subtitle">عرض مركزي للكارتات وسجلات تفريغ البوالص مع التصفية والطباعة والتعديل الآمن.</p>
+          <h2 class="all-receipts-title">جميع نماذج الصرف</h2>
+          <p class="all-receipts-subtitle">عرض مركزي للكارتات مع التصفية والطباعة والتعديل الآمن.</p>
           <div class="all-receipts-tabs no-print" role="tablist" aria-label="جميع النماذج">
             <button type="button" class="all-tab" data-tab="receipts">📋 الكارتات</button>
-            <button type="button" class="all-tab" data-tab="bolsas">📦 تفريغ البوالص</button>
           </div>
         </div>
 
@@ -486,11 +404,6 @@ function renderShell() {
             ${renderReceiptsControls()}
             <div id="receiptsSummaryContainer"></div>
             <div id="receiptsList" class="all-list"></div>
-          </section>
-          <section class="all-panel hidden" data-panel="bolsas">
-            ${renderBolsasControls()}
-            <div id="bolsasSummaryContainer"></div>
-            <div id="bolsasList" class="all-list"></div>
           </section>
         </div>
 
@@ -554,7 +467,6 @@ function renderReceiptsControls() {
       </label>
       <button type="button" data-action="apply-filter" data-tab="receipts" class="apply-btn apply-btn--receipts">تطبيق</button>
       <button type="button" data-action="print-filtered" data-tab="receipts" class="pdf-btn">📄 تصدير PDF</button>
-      <button type="button" data-action="export-excel-filtered" data-tab="receipts" class="excel-btn">📊 تصدير Excel</button>
     </div>
     <datalist id="receiptOwnersDatalist"></datalist>
     <datalist id="receiptCompaniesDatalist"></datalist>
@@ -564,95 +476,22 @@ function renderReceiptsControls() {
   `;
 }
 
-function renderBolsasControls() {
-  const f = STATE.filters.bolsas;
-  return `
-    <div class="filter-grid bolsa-filters no-print">
-      <label>
-        <span>بحث عام</span>
-        <input data-filter-tab="bolsas" data-filter-key="global" type="text" value="${esc(f.global)}" placeholder="بحث في جميع الحقول" />
-      </label>
-      <label>
-        <span>اسم المندوب</span>
-        <input data-filter-tab="bolsas" data-filter-key="agent" type="text" value="${esc(f.agent)}" placeholder="اسم المندوب" list="bolsaAgentsDatalist" class="agent-filter" />
-      </label>
-      <label>
-        <span>صاحب المركبة</span>
-        <input data-filter-tab="bolsas" data-filter-key="owner" type="text" value="${esc(f.owner)}" placeholder="صاحب المركبة" list="bolsaOwnersDatalist" />
-      </label>
-      <label>
-        <span>اسم الشركة</span>
-        <input data-filter-tab="bolsas" data-filter-key="company" type="text" value="${esc(f.company)}" placeholder="اسم الشركة" list="bolsaCompaniesDatalist" />
-      </label>
-      <label>
-        <span>رقم السيارة</span>
-        <input data-filter-tab="bolsas" data-filter-key="vehicle" type="text" value="${esc(f.vehicle)}" placeholder="رقم السيارة" list="bolsaVehiclesDatalist" />
-      </label>
-      <label>
-        <span>رقم الكارتة</span>
-        <input data-filter-tab="bolsas" data-filter-key="karta" type="text" value="${esc(f.karta)}" placeholder="رقم الكارتة" list="bolsaKartasDatalist" />
-      </label>
-      <label>
-        <span>التاريخ</span>
-        <input data-filter-tab="bolsas" data-filter-key="date" type="date" value="${esc(f.date)}" />
-      </label>
-    </div>
-    <div class="range-toolbar no-print">
-      <button type="button" data-range="bolsas" data-days="1" class="range-btn">يوم</button>
-      <button type="button" data-range="bolsas" data-days="7" class="range-btn">أسبوع</button>
-      <button type="button" data-range="bolsas" data-days="30" class="range-btn">شهر</button>
-      <label>
-        <span>من</span>
-        <input data-filter-tab="bolsas" data-filter-key="from" type="date" value="${esc(f.from)}" />
-      </label>
-      <label>
-        <span>إلى</span>
-        <input data-filter-tab="bolsas" data-filter-key="to" type="date" value="${esc(f.to)}" />
-      </label>
-      <button type="button" data-action="apply-filter" data-tab="bolsas" class="apply-btn apply-btn--bolsas">تطبيق</button>
-      <button type="button" data-action="print-filtered" data-tab="bolsas" class="pdf-btn">📄 تصدير PDF</button>
-    </div>
-    <datalist id="bolsaAgentsDatalist"></datalist>
-    <datalist id="bolsaOwnersDatalist"></datalist>
-    <datalist id="bolsaCompaniesDatalist"></datalist>
-    <datalist id="bolsaVehiclesDatalist"></datalist>
-    <datalist id="bolsaKartasDatalist"></datalist>
-  `;
-}
 
-function renderSummaryCards(tab, _preFiltered) {
-  if (tab === 'receipts') {
-    const filtered = _preFiltered || getReceiptCardsFiltered();
-    const sums = summarizeReceipts(filtered);
-    const html = `
-      <div class="summary-grid summary-grid--receipts">
-        ${summaryCard('💰 إجمالي الصافي المستحق', centsToMoney(sums.netDue), 'summary-card--violet')}
-        ${summaryCard('💰 إجمالي الصافي الكلي', centsToMoney(sums.netTotal), 'summary-card--violet')}
-        ${summaryCard('📊 إجمالي المدفوع', centsToMoney(sums.paid), 'summary-card--red')}
-        ${summaryCard('🗂️ عدد الكارتات', String(sums.count), 'summary-card--blue')}
-        ${summaryCard('⚖️ إجمالي الوزن', fmtMoney(sums.weight), 'summary-card--green')}
-        ${summaryCard('🚛 إجمالي النولون', fmtMoney(sums.noloon), 'summary-card--cyan')}
-        ${summaryCard('🏦 إجمالي العهدة', fmtMoney(sums.ohda), 'summary-card--emerald')}
-      </div>
-    `;
-    const container = document.getElementById('receiptsSummaryContainer');
-    if (container) container.innerHTML = html;
-    return html;
-  }
-
-  const filteredBolsas = _preFiltered || getBolsaCardsFiltered();
-  const sums = summarizeBolsas(filteredBolsas);
+function renderSummaryCards(_preFiltered) {
+  const filtered = _preFiltered || getReceiptCardsFiltered();
+  const sums = summarizeReceipts(filtered);
   const html = `
-    <div class="summary-grid summary-grid--bolsas">
-      ${summaryCard('⚖️ إجمالي الوزن', fmtMoney(sums.weight), 'summary-card--green')}
+    <div class="summary-grid summary-grid--receipts">
+      ${summaryCard('💰 إجمالي الصافي المستحق', centsToMoney(sums.netDue), 'summary-card--violet')}
+      ${summaryCard('💰 إجمالي الصافي الكلي', centsToMoney(sums.netTotal), 'summary-card--violet')}
+      ${summaryCard('📊 إجمالي المدفوع', centsToMoney(sums.paid), 'summary-card--red')}
       ${summaryCard('🗂️ عدد الكارتات', String(sums.count), 'summary-card--blue')}
-      ${summaryCard('🏦 إجمالي العهدة', fmtMoney(sums.ohda), 'summary-card--blue')}
-      ${summaryCard('🚬 إجمالي الاكرامية', fmtMoney(sums.dokhan), 'summary-card--orange')}
-      ${summaryCard('💎 الإجمالي الكلي', fmtMoney(sums.grand), 'summary-card--violet')}
-      ${summaryCard('⛽ إجمالي السولار', fmtMoney(sums.solar), 'summary-card--cyan')}
+      ${summaryCard('⚖️ إجمالي الوزن', fmtMoney(sums.weight), 'summary-card--green')}
+      ${summaryCard('🚛 إجمالي النولون', fmtMoney(sums.noloon), 'summary-card--cyan')}
+      ${summaryCard('🏦 إجمالي العهدة', fmtMoney(sums.ohda), 'summary-card--emerald')}
     </div>
   `;
-  const container = document.getElementById('bolsasSummaryContainer');
+  const container = document.getElementById('receiptsSummaryContainer');
   if (container) container.innerHTML = html;
   return html;
 }
@@ -819,132 +658,18 @@ function renderReceiptList(_preFiltered) {
   }
 }
 
-function renderBolsaList(_preFiltered) {
-  const container = document.getElementById('bolsasList');
-  if (!container) return;
-  const filtered = _preFiltered || getBolsaCardsFiltered();
 
-  if (!filtered.length) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state__icon">📦</div>
-        <p class="empty-state__text">لا توجد سجلات بعد</p>
-        <p class="empty-state__sub">جرّب تغيير نطاق التاريخ أو شروط البحث</p>
-      </div>
-    `;
-    return;
-  }
-
-  container.innerHTML = filtered
-    .sort((a, b) => new Date(b.bolsa_date || 0) - new Date(a.bolsa_date || 0))
-    .map((record) => {
-      const rows = getBolsaRows(record);
-      return `
-        <article class="record-card bolsa-record" data-kind="bolsa" data-id="${esc(record.id)}">
-          <header class="record-card__header record-card__header--emerald">
-            <div class="record-card__heading">
-              <h3>${esc(receiptDisplayDate(record.bolsa_date))} — ${esc(receiptDayName(record.bolsa_date))} — ${esc(record.agent_name || record.agent_id || '—')}</h3>
-              <p>عدد الصفوف: ${rows.length}</p>
-              <span class="record-card__meta">تم الحفظ: ${esc(receiptFullDate(record.created_at || record.updated_at || record.bolsa_date))} ${esc(receiptTime(record.created_at || record.updated_at || record.bolsa_date))}</span>
-            </div>
-            <div class="record-card__actions no-print">
-              <button type="button" data-action="edit-bolsa" data-id="${esc(record.id)}">✏️ تعديل</button>
-              <button type="button" data-action="print-bolsa" data-id="${esc(record.id)}">🖨️ طباعة</button>
-              <button type="button" data-action="delete-bolsa" data-id="${esc(record.id)}">🗑️ حذف</button>
-            </div>
-          </header>
-          <div class="record-card__table-wrap">
-            <table class="record-table record-table--emerald">
-              <thead>
-                <tr>
-                  <th>رقم الكارتة</th>
-                  <th>التاريخ</th>
-                  <th>اسم السائق</th>
-                  <th>صاحب المركبة</th>
-                  <th>رقم المركبة</th>
-                  <th>وزن وش</th>
-                  <th>وزن م</th>
-                  <th>اسم الشركة</th>
-                  <th>التحميل</th>
-                  <th>الجهة</th>
-                  <th>النوع</th>
-                  <th>العهدة</th>
-                  <th>اكرامية</th>
-                  <th>نولون</th>
-                  <th>سولار</th>
-                  <th>ملاحظات</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map((row) => `
-                  <tr>
-                    <td>${esc(row.kartaNo || '')}</td>
-                    <td>${esc(row.rowdate || '')}</td>
-                    <td>${esc(row.driver || '')}</td>
-                    <td>${esc(row.owner_name || '')}</td>
-                    <td>${esc(row.carNo || '')}</td>
-                    <td>${esc(row.weight ?? '')}</td>
-                    <td>${esc(row.weight2 ?? '')}</td>
-                    <td>${esc(row.office || '')}</td>
-                    <td>${esc(row.loading || '')}</td>
-                    <td>${esc(row.direction || '')}</td>
-                    <td>${esc(row.type || '')}</td>
-                    <td>${esc(row.ohda ?? '')}</td>
-                    <td>${esc(row.dokhan ?? '')}</td>
-                    <td>${esc(row.noloon ?? '')}</td>
-                    <td>${esc(row.solar ?? '')}</td>
-                    <td>${esc(row.notes || '')}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          <div class="record-card__footer record-card__footer--emerald">
-            <div>
-              <span>عدد الصفوف</span>
-              <strong>${rows.length}</strong>
-            </div>
-            <div>
-              <span>إجمالي الوزن</span>
-              <strong>${fmtMoney(getBolsaWeight(record))}</strong>
-            </div>
-            <div>
-              <span>إجمالي العهدة</span>
-              <strong>${fmtMoney(getBolsaOhda(record))}</strong>
-            </div>
-            <div>
-              <span>إجمالي اكرامية</span>
-              <strong>${fmtMoney(getBolsaDokhan(record))}</strong>
-            </div>
-            <div>
-              <span>الإجمالي الكلي</span>
-              <strong>${fmtMoney(toNumber(record.totals?.grand_total))}</strong>
-            </div>
-          </div>
-        </article>
-      `;
-    })
-    .join('');
-}
-
-function renderLists(_preFilteredReceipts, _preFilteredBolsas) {
+function renderLists(_preFilteredReceipts) {
   renderReceiptList(_preFilteredReceipts);
-  renderBolsaList(_preFilteredBolsas);
 }
 
 function renderDatalists() {
   const receipts = STATE.receipts;
-  const bolsas = STATE.bolsas;
   setDatalist('receiptOwnersDatalist', receipts.map((r) => r.owner_name || r.client_name).filter(Boolean));
   setDatalist('receiptCompaniesDatalist', receipts.map((r) => r.company_name).filter(Boolean));
   setDatalist('receiptNumbersDatalist', receipts.map((r) => r.receipt_number).filter(Boolean));
   setDatalist('receiptVehiclesDatalist', receipts.flatMap((r) => getReceiptRows(r).map((row) => row.car || row.carNo || row.vehicle_plate)).filter(Boolean));
-  setDatalist('receiptKartasDatalist', receipts.flatMap((r) => getReceiptRows(r).map((row) => row.kartaNo)).filter(Boolean));
-  setDatalist('bolsaAgentsDatalist', bolsas.map((r) => r.agent_name || r.agent_id).filter(Boolean));
-  setDatalist('bolsaOwnersDatalist', bolsas.flatMap((r) => getBolsaRows(r).map((row) => row.owner_name)).filter(Boolean));
-  setDatalist('bolsaCompaniesDatalist', bolsas.flatMap((r) => getBolsaRows(r).map((row) => row.office)).filter(Boolean));
-  setDatalist('bolsaVehiclesDatalist', bolsas.flatMap((r) => getBolsaRows(r).map((row) => row.carNo)).filter(Boolean));
-  setDatalist('bolsaKartasDatalist', bolsas.flatMap((r) => getBolsaRows(r).map((row) => row.kartaNo)).filter(Boolean));
+  setDatalist('receiptKartasDatalist', receipts.flatMap((r) => getReceiptRows(r).map((row) => row.kartano)).filter(Boolean));
 }
 
 function setDatalist(id, values) {
@@ -955,41 +680,6 @@ function setDatalist(id, values) {
 }
 
 
-/**
- * Enrich bolsa records with agent_name (FIX #5).
- *
- * Bolsa records persist only `agent_id`.  The UI (cards, filters, print,
- * export) reads `record.agent_name || record.agent_id`, so without
- * enrichment the user sees raw IDs.
- *
- * Implementation:
- *   - One bulk DB read of all agents (no per-row queries).
- *   - In-memory Map for O(1) id → name lookup.
- *   - Returns a NEW array of records (does not mutate inputs).
- *   - `agent_name` is added as a transient view-layer field; the DB
- *     record shape is unchanged, so persistence and MySQL migration
- *     are unaffected.  After MySQL migration this becomes a JOIN.
- */
-async function _enrichBolsasWithAgentName(bolsas) {
-  if (!Array.isArray(bolsas) || bolsas.length === 0) return bolsas;
-
-  // One read for every render; cheap because agents is a small store and
-  // we already had to read it for other parts of the UI.
-  const allAgents = await ClientRepository.getAgents(window.__APP_CONTEXT__?.username || 'admin');
-  const nameById = new Map();
-  for (const a of allAgents) {
-    if (!a || a.deleted_at !== null) continue;
-    nameById.set(String(a.id), String(a.name || '').trim());
-  }
-
-  return bolsas.map((record) => {
-    if (record && record.agent_id != null) {
-      const name = nameById.get(String(record.agent_id));
-      if (name) return { ...record, agent_name: name };
-    }
-    return record;
-  });
-}
 
 async function loadAllReceiptsData() {
   const username = getSessionUsername();
@@ -997,16 +687,11 @@ async function loadAllReceiptsData() {
   if (STATE.loading) return;
   STATE.loading = true;
   try {
-    const [receipts, bolsas] = await Promise.all([
-      ReceiptsModule.getAll(username),
-      ReceiptsModule.getBolsaForms(username),
-    ]);
+    const receipts = await ReceiptsModule.getAll(username);
 
     STATE.receipts = receipts.slice();
-    STATE.bolsas = await _enrichBolsasWithAgentName(bolsas);
 
-    renderSummaryCards('receipts');
-    renderSummaryCards('bolsas');
+    renderSummaryCards();
     renderLists();
     setActiveTabButtons();
 
@@ -1020,20 +705,14 @@ async function loadAllReceiptsData() {
   }
 }
 
-function serializeCurrentView(tab) {
-  const records = tab === 'receipts' ? getReceiptCardsFiltered() : getBolsaCardsFiltered();
-  const title   = tab === 'receipts' ? 'جميع الكارتات' : 'تفريغ البوالص';
+function serializeCurrentView() {
+  const records = getReceiptCardsFiltered();
+  const title   = 'جميع الكارتات';
 
   // ── إجماليات الكارتات: تُحسب من نفس السجلات المعروضة ──────────────────────
-  const summaryHTML = tab === 'receipts'
-    ? _buildReceiptsBulkSummary(summarizeReceipts(records))
-    : '';
+  const summaryHTML = _buildReceiptsBulkSummary(summarizeReceipts(records));
 
-  const body = records.map((record) =>
-    tab === 'receipts'
-      ? buildReceiptPrintBlock(record)
-      : buildBolsaPrintBlock(record)
-  ).join('');
+  const body = records.map((record) => buildReceiptPrintBlock(record)).join('');
 
   const content = body
     ? `${summaryHTML}${body}`
@@ -1246,7 +925,7 @@ const _RECEIPT_PRINT_COLS = Object.freeze([
 function _receiptPrintGetCellValue(row, colKey) {
   switch (colKey) {
     case 'kartano':
-      return row.kartano ?? row.kartaNo ?? row.karta ?? '';
+      return row.kartano ?? '';
     case 'date':
       return row.date ?? row.rowdate ?? '';
     case 'data':
@@ -1618,74 +1297,7 @@ function printSingleReceipt(record) {
 
 // ─── END: RECEIPT CARD PRINT SYSTEM ──────────────────────────────────────────
 
-function printSingleBolsa(record) {
-  if (!record) return;
-  const body = buildBolsaPrintBlock(record);
-  const title = 'طباعة نموذج تفريغ البوالص';
-  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${title}</title>
-<style>
-body{font-family:Arial,sans-serif;direction:rtl;margin:0;padding:15mm;background:#fff;color:#000;font-size:10pt;}
-table{width:100%;border-collapse:collapse;font-size:8pt;margin-bottom:8px;}
-th,td{border:1px solid #000;padding:4px 5px;text-align:center;vertical-align:middle;}
-th{background:#0f766e;color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-.print-card{border:1.5px solid #0f766e;border-radius:8px;padding:12px 14px;margin-bottom:16px;}
-.print-card header{font-size:12pt;font-weight:700;padding-bottom:8px;margin-bottom:6px;border-bottom:2px solid #0f766e;color:#0f766e;}
-.print-meta{margin:6px 0 10px;color:#374151;font-size:9pt;font-weight:600;}
-.print-footer{display:flex;flex-wrap:wrap;gap:10px 20px;padding:8px 0 0;border-top:1px solid #e5e7eb;font-size:9pt;color:#374151;}
-.print-footer strong{color:#0f766e;font-weight:800;}
-@page{size:A4 landscape;margin:10mm;}
-</style></head><body>${body}</body></html>`;
 
-  printHTML(html, { id: 'bolsa-print-iframe' });
-}
-
-function buildBolsaPrintBlock(record) {
-  const rows = getBolsaRows(record);
-  return `
-    <section class="print-card print-card--emerald">
-      <header><strong>${esc(receiptDisplayDate(record.bolsa_date))}</strong> - ${esc(receiptDayName(record.bolsa_date))} - ${esc(record.agent_name || record.agent_id || '')}</header>
-      <div class="print-meta">الإجمالي الكلي: ${esc(fmtMoney(toNumber(record.totals?.grand_total)))}</div>
-      <table>
-        <thead>
-          <tr>
-            <th>رقم الكارتة</th><th>التاريخ</th><th>اسم السائق</th><th>صاحب المركبة</th><th>رقم المركبة</th>
-            <th>وزن وش</th><th>وزن م</th><th>اسم الشركة</th><th>التحميل</th><th>الجهة</th>
-            <th>النوع</th><th>العهدة</th><th>اكرامية</th><th>نولون</th><th>سولار</th><th>ملاحظات</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${rows.map((row) => `
-            <tr>
-              <td>${esc(row.kartaNo || '')}</td>
-              <td>${esc(row.rowdate || '')}</td>
-              <td>${esc(row.driver || '')}</td>
-              <td>${esc(row.owner_name || '')}</td>
-              <td>${esc(row.carNo || '')}</td>
-              <td>${esc(row.weight ?? '')}</td>
-              <td>${esc(row.weight2 ?? '')}</td>
-              <td>${esc(row.office || '')}</td>
-              <td>${esc(row.loading || '')}</td>
-              <td>${esc(row.direction || '')}</td>
-              <td>${esc(row.type || '')}</td>
-              <td>${esc(row.ohda ?? '')}</td>
-              <td>${esc(row.dokhan ?? '')}</td>
-              <td>${esc(row.noloon ?? '')}</td>
-              <td>${esc(row.solar ?? '')}</td>
-              <td>${esc(row.notes || '')}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-      <div class="print-footer">
-        <span>عدد الصفوف: <strong>${rows.length}</strong></span>
-        <span>إجمالي الوزن: <strong>${fmtMoney(getBolsaWeight(record))}</strong></span>
-        <span>إجمالي العهدة: <strong>${fmtMoney(getBolsaOhda(record))}</strong></span>
-        <span>إجمالي اكرامية: <strong>${fmtMoney(getBolsaDokhan(record))}</strong></span>
-        <span>الإجمالي الكلي: <strong>${fmtMoney(toNumber(record.totals?.grand_total))}</strong></span>
-      </div>
-    </section>
-  `;
-}
 
 function printStyles() {
   return `
@@ -1708,7 +1320,6 @@ function printStyles() {
       page-break-inside: avoid;
       break-inside: avoid;
     }
-    .print-card--emerald { border-color: #0f766e; }
     .print-card header {
       font-size: 12pt;
       font-weight: 700;
@@ -1717,7 +1328,6 @@ function printStyles() {
       border-bottom: 2px solid #e5e7eb;
       color: #1e3a8a;
     }
-    .print-card--emerald header { border-color: #0f766e; color: #0f766e; }
     .print-meta { margin: 6px 0 10px; color: #374151; font-size: 9pt; font-weight: 600; }
     table { width: 100%; border-collapse: collapse; font-size: 7.5pt; margin-bottom: 8px; }
     th, td {
@@ -1734,9 +1344,6 @@ function printStyles() {
       font-size: 7pt;
       -webkit-print-color-adjust: exact !important;
       print-color-adjust: exact !important;
-    }
-    .print-card--emerald th {
-      background: #0f766e !important;
     }
     .sep-row td,
     .vehicle-separator-row td,
@@ -1767,8 +1374,8 @@ function printStyles() {
  * Print a single receipt from saved data — same layout as receipt page printer.
  * Builds the print HTML from stored record data, no DOM/page switch needed.
  */
-async function printCurrentView(tab = STATE.tab) {
-  const html = serializeCurrentView(tab);
+async function printCurrentView() {
+  const html = serializeCurrentView();
   printHTML(html, { id: 'all-receipts-print-iframe' });
 }
 
@@ -1811,77 +1418,9 @@ async function handleCardAction(action, id, tab) {
     }
   }
 
-  const record = STATE.bolsas.find((item) => String(item.id) === String(id));
-  if (!record) return;
-  if (action === 'edit-bolsa') {
-    if (typeof window.showPage === 'function') await window.showPage('bolsaPage');
-    loadBolsaForEdit(record);
-    return;
-  }
-  if (action === 'print-bolsa') {
-    printSingleBolsa(record);
-    return;
-  }
-  if (action === 'delete-bolsa') {
-    if (!window.confirm('هل تريد حذف سجل تفريغ البوالص؟')) return;
-    await FinancialService.deleteBolsaForm(username, id);
-    // NOTE: bolsaForms:changed + agents:changed are dispatched by
-    // FinancialService.deleteBolsaForm after the DB tx commits.  Per
-    // the service-owned events architecture rule, no dispatch here.
-  }
+
 }
 
-/**
- * _exportReceiptsToExcel()
- *
- * Collects the receipts currently visible on screen (after all search,
- * filter, date-range, and status filters) and exports them to a single
- * flat Excel sheet via ExcelService.exportAllReceiptsRows().
- *
- * Data flow:
- *   1. getReceiptCardsFiltered() → filtered + sorted record list
- *      (same source used by renderReceiptList — guarantees we export
- *       exactly what the user sees)
- *   2. For each record, getDisplayRowsForReceipt(record) → visible rows
- *      (honours row-level text filters such as karta / vehicle search)
- *   3. Pairs { record, rows } are passed to ExcelService — no DOM reads,
- *      no DB access — pure data transform.
- *
- * Rules followed:
- *   - Only data rows exported (separator rows skipped by the service).
- *   - owner_name injected per row from the parent record.
- *   - Empty records (0 visible data rows) are silently skipped.
- *   - No financial recalculation — values read as stored.
- */
-function _exportReceiptsToExcel() {
-  try {
-    // Step 1: get filtered records in display order
-    // renderReceiptList() applies .sort((a,b) => (b.created_at||0)-(a.created_at||0))
-    // We replicate that sort here to match what the user sees exactly.
-    const filtered = getReceiptCardsFiltered()
-      .slice()
-      .sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-
-    if (filtered.length === 0) {
-      alert('لا توجد نماذج معروضة للتصدير.');
-      return;
-    }
-
-    // Step 2: pair each record with its visible rows
-    // getDisplayRowsForReceipt respects active row-level filters
-    const receiptsWithRows = filtered.map(record => ({
-      record,
-      rows: getDisplayRowsForReceipt(record),
-    }));
-
-    // Step 3: delegate to excelService — pure data export, no DOM
-    ExcelService.exportAllReceiptsRows(receiptsWithRows);
-
-  } catch (err) {
-    console.error('[allReceipts] Excel export failed:', err);
-    alert(err.message || '❌ فشل تصدير Excel');
-  }
-}
 
 function bindPageEvents() {
   const page = getPage();
@@ -1926,11 +1465,7 @@ function bindPageEvents() {
         return;
       }
       if (action === 'print-filtered') {
-        await printCurrentView(tab);
-        return;
-      }
-      if (action === 'export-excel-filtered' && tab === 'receipts') {
-        _exportReceiptsToExcel();
+        await printCurrentView();
         return;
       }
     }
@@ -1979,12 +1514,10 @@ function bindPageEvents() {
 function renderAll() {
   setActiveTabButtons();
   // Cache filtered results for this render cycle to avoid re-computing
-  // getReceiptCardsFiltered() and getBolsaCardsFiltered() multiple times.
+  // getReceiptCardsFiltered() multiple times.
   const _cachedReceiptsFiltered = getReceiptCardsFiltered();
-  const _cachedBolsasFiltered = getBolsaCardsFiltered();
-  renderSummaryCards('receipts', _cachedReceiptsFiltered);
-  renderSummaryCards('bolsas', _cachedBolsasFiltered);
-  renderLists(_cachedReceiptsFiltered, _cachedBolsasFiltered);
+  renderSummaryCards(_cachedReceiptsFiltered);
+  renderLists(_cachedReceiptsFiltered);
 }
 
 async function refreshAllReceiptsPage(force = false) {
@@ -2001,8 +1534,7 @@ async function refreshAllReceiptsPage(force = false) {
 /**
  * Phase 2 TASK F — coalesced refresh scheduler.
  *
- * Domain events frequently fire in pairs (e.g. createBolsaForm emits both
- * bolsaForms:changed AND agents:changed back-to-back).  Each listener
+ * Domain events frequently fire in bursts.  Each listener
  * previously called refreshAllReceiptsPage(true) → loadAllReceiptsData()
  * → and although a STATE.loading guard prevented the SECOND DB read,
  * the listener still ran a redundant async chain.
@@ -2053,7 +1585,6 @@ async function initAllReceiptsPage() {
   // Phase 2 TASK F — coalesced single-refresh-per-burst listeners.
   // Replaces 4 independent listeners that each kicked an async refresh.
   window.addEventListener('receipts:changed',    _scheduleAllReceiptsRefresh);
-  window.addEventListener('bolsaForms:changed',  _scheduleAllReceiptsRefresh);
   window.addEventListener('agents:changed',      _scheduleAllReceiptsRefresh);
   window.addEventListener('offices:changed',     _scheduleAllReceiptsRefresh);
 

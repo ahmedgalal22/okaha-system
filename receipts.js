@@ -10,7 +10,6 @@ import { AuthModule } from './auth.js';
 import { OwnersModule, VehiclesModule } from './entities.js';
 import { Money } from './money.js';
 import { printHTML } from './printEngine.js';
-import { ExcelService } from './excelService.js';
 import { DBProvider } from './services/dbProvider.js';
 import { ReceiptRepository } from './services/receiptRepository.js';
 import { ClientRepository } from './services/clientRepository.js';
@@ -33,7 +32,6 @@ const ROW_PAYMENT = {
 };
 
 const STORE = 'receipts';
-const BOLSA_STORE = 'bolsaForms';
 const COUNTER_STORE = 'counters';
 const RECEIPT_NUMBER_COUNTER = 'receipt_number';
 
@@ -260,113 +258,6 @@ function assignReceiptNumber(data, number) {
   };
 }
 
-// ─── PRIVATE: bolsa linkage helper (TASK E — Phase 2) ────────────────────────
-//
-// Single source of truth for "this receipt's rows reference these karta
-// numbers; rewrite bolsa rows so used_in_receipt / used_receipt_id
-// reflect that exactly".
-//
-// Used by:
-//   - create()  →  newKartaNos = receipt's kartas, receiptId = new id
-//   - update()  →  newKartaNos = receipt's kartas, receiptId = existing id
-//   - remove()  →  newKartaNos = ∅ (empty Set), receiptId = the one being deleted
-//
-// In every case the rule is identical:
-//   for every bolsa row R in the current user's bolsaForms:
-//     if R was previously linked to receiptId AND its kartaNo is NOT in
-//        newKartaNos                       → UNLINK  (used_in_receipt=false,
-//                                                     used_receipt_id=null)
-//     if R was NOT linked to receiptId AND its kartaNo IS in newKartaNos
-//        AND that kartaNo has not already been taken by another linked row
-//                                          → LINK
-//     otherwise leave R unchanged.
-//
-// Per-form patches are coalesced so we issue at most ONE update per form,
-// and only forms whose `rows` array actually changed are returned.
-//
-// Returns: { ops: Array<runOp>, missingKartas: string[] }
-//   - ops:           ready to pass as extraOps to FinancialService.{create,update,delete}Receipt
-//   - missingKartas: kartas in `newKartaNos` that don't exist in any bolsa row.
-//                    Surfaced as a soft warning (existing behavior — non-blocking).
-//
-// Reads via the by_username index (NOT a global getAll), so it's already
-// tenant-scoped.  No additional full scans were introduced — create() used
-// to do exactly this same scan; we just centralise it.
-async function _buildBolsaLinkAndUnlinkOps(receiptId, username, newKartaNos) {
-  const receiptIdStr = String(receiptId || '').trim();
-  if (!receiptIdStr) {
-    return { ops: [], missingKartas: [] };
-  }
-  // newKartaNos may be a Set or array; normalise.
-  const desiredSet = new Set(
-    (newKartaNos instanceof Set ? [...newKartaNos] : (Array.isArray(newKartaNos) ? newKartaNos : []))
-      .map(k => String(k ?? '').trim())
-      .filter(Boolean)
-  );
-
-  const bolsaForms = await DBProvider.getByIndex(BOLSA_STORE, 'by_username', username);
-
-  // Per-form mutable working copy; only kept if it ends up different from original.
-  const updatedRowsByForm = new Map(); // formId → rows[] (shallow copies)
-  const formById = new Map(); // formId → original form (for reference)
-  for (const form of bolsaForms) {
-    if (!form || !Array.isArray(form.rows)) continue;
-    formById.set(String(form.id), form);
-  }
-
-  // To detect "this karta has been taken by another bolsa row" within the
-  // SAME save (in case the same kartaNo appears in multiple bolsa rows —
-  // possible for legacy data), we link only the FIRST match per kartaNo.
-  const linkedKartas = new Set();
-  const seenKartasInBolsas = new Set();
-
-  for (const [formId, form] of formById) {
-    let modified = false;
-    const rows = form.rows.map((row, _idx) => {
-      const k = row && row.kartaNo != null ? String(row.kartaNo).trim() : '';
-      const wasLinkedToThisReceipt =
-        row && row.used_in_receipt === true
-        && String(row.used_receipt_id || '') === receiptIdStr;
-      const shouldBeLinked = k && desiredSet.has(k) && !linkedKartas.has(k);
-
-      if (k) seenKartasInBolsas.add(k);
-
-      if (shouldBeLinked) {
-        linkedKartas.add(k);
-        if (!wasLinkedToThisReceipt
-            || row.used_in_receipt !== true
-            || String(row.used_receipt_id || '') !== receiptIdStr) {
-          modified = true;
-          return { ...row, used_in_receipt: true, used_receipt_id: receiptIdStr };
-        }
-        // Already correctly linked; leave as-is.
-        return row;
-      }
-
-      // Not desired-linked.  If it was previously linked to THIS receipt → unlink.
-      if (wasLinkedToThisReceipt) {
-        modified = true;
-        return { ...row, used_in_receipt: false, used_receipt_id: null };
-      }
-      return row;
-    });
-
-    if (modified) updatedRowsByForm.set(formId, rows);
-  }
-
-  const ops = [...updatedRowsByForm.entries()].map(([formId, rows]) => ({
-    op: 'update',
-    store: BOLSA_STORE,
-    id: formId,
-    patch: { rows },
-  }));
-
-  // Kartas the receipt wants but no bolsa row carries — only meaningful for
-  // create/update; deletion passes an empty set so this stays empty there.
-  const missingKartas = [...desiredSet].filter(k => !seenKartasInBolsas.has(k));
-
-  return { ops, missingKartas };
-}
 
 // ─── PUBLIC: create ───────────────────────────────────────────────────────────
 
@@ -377,27 +268,6 @@ async function create(username, rawData) {
 
   const normalized     = _normalize(rawData);
   const servicePayload = _buildServicePayload(normalized);
-
-  // ── Bolsa linkage: collect karta numbers used by this receipt ──────────────
-  const dataRows = normalized.rows.filter(r => r._type !== ROW_TYPES.SEPARATOR);
-  const kartaNos = new Set(
-    dataRows.map(r => (r.kartano != null ? String(r.kartano).trim() : '')).filter(Boolean)
-  );
-
-  let _bolsaWarning = null;
-  let bolsaOps = [];
-
-  if (kartaNos.size === 0) {
-    _bolsaWarning = 'تنبيه: لا توجد أرقام كارتة في هذا الإيصال';
-  } else {
-    // Phase 2 TASK E — unified link/unlink helper.  For create there's no
-    // prior linkage to undo, so the call collapses to a pure "link" pass.
-    const linkage = await _buildBolsaLinkAndUnlinkOps(normalized.id, username, kartaNos);
-    bolsaOps = linkage.ops;
-    if (linkage.missingKartas.length > 0) {
-      _bolsaWarning = `تنبيه: الكارتات التالية غير موجودة في البوالص: ${linkage.missingKartas.join('، ')}`;
-    }
-  }
 
   // ── Receipt-number allocation + atomic save (with retry on constraint clash) ──
   const MAX_RETRIES = 5;
@@ -410,10 +280,9 @@ async function create(username, rawData) {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       const payloadWithNumber = assignReceiptNumber(servicePayload, String(nextNumber));
-      const result = await FinancialService.createReceipt(username, payloadWithNumber, bolsaOps);
+      const result = await FinancialService.createReceipt(username, payloadWithNumber);
 
-      if (_bolsaWarning) console.warn('[ReceiptsModule]', _bolsaWarning);
-      return { result, normalized, warning: _bolsaWarning };
+      return { result, normalized };
     } catch (err) {
       if (isConstraintError(err) && attempt < MAX_RETRIES) {
         const fresh = await allocateReceiptNumber(username);
@@ -437,18 +306,7 @@ async function update(username, id, rawData) {
   const normalized     = _normalize({ ...rawData, id });
   const servicePayload = _buildServicePayload(normalized);
 
-  // Phase 2 TASK E — recompute bolsa linkage on every receipt update.
-  // The helper handles both unlink (rows that used to point at this receipt
-  // but whose kartaNo is no longer in the new set) and link (rows whose
-  // kartaNo entered the new set).  All applied atomically with the
-  // receipt update inside one DB transaction.
-  const dataRows = normalized.rows.filter(r => r._type !== ROW_TYPES.SEPARATOR);
-  const kartaNos = new Set(
-    dataRows.map(r => (r.kartano != null ? String(r.kartano).trim() : '')).filter(Boolean)
-  );
-  const { ops: bolsaOps } = await _buildBolsaLinkAndUnlinkOps(id, username, kartaNos);
-
-  const result = await FinancialService.updateReceipt(username, id, servicePayload, bolsaOps);
+  const result = await FinancialService.updateReceipt(username, id, servicePayload);
 
   return { result, normalized };
 }
@@ -459,12 +317,7 @@ async function remove(username, id) {
   if (!username) throw new Error('[ReceiptsModule:delete] username is required.');
   if (!id)       throw new Error('[ReceiptsModule:delete] id is required.');
 
-  // Phase 2 TASK E — atomically unlink any bolsa rows that pointed back
-  // at this receipt.  Pass an empty kartaNos Set so the helper produces
-  // pure-unlink ops (no link side).  Atomic with the receipt soft-delete.
-  const { ops: unlinkOps } = await _buildBolsaLinkAndUnlinkOps(id, username, new Set());
-
-  const res = await FinancialService.deleteReceipt(username, id, unlinkOps);
+  const res = await FinancialService.deleteReceipt(username, id);
   window.dispatchEvent(new CustomEvent('receipts:changed'));
   return res;
 }
@@ -609,11 +462,6 @@ async function saveDriverName(username, name) {
   }
 }
 
-async function getBolsaForms(username) {
-  if (!username) throw new Error('[ReceiptsModule:getBolsaForms] username is required.');
-  return DBProvider.getByIndex(BOLSA_STORE, 'by_username', username);
-}
-
 async function getVehicleById(vehicle_id) {
   if (!vehicle_id) return null;
   return ClientRepository.getVehicleById(vehicle_id);
@@ -650,7 +498,6 @@ const ReceiptsModule = Object.freeze({
   getAgents,
   getDrivers,
   saveDriverName,
-  getBolsaForms,
   getVehicleById,
   getVehiclesByPlate,
   getOfficesForUser,
@@ -686,7 +533,6 @@ function _enterReceiptEditMode(receiptData) {
 
 let receiptRowCounter = 0;
 let _isSaving         = false;
-let _bolsaRowsCache   = null;
 let _clientsCache     = [];
 const _vehicleAnalysisCache = new Map();
 
@@ -696,7 +542,6 @@ const SEPARATOR_CLASS = 'vehicle-separator-row';
 
 /**
  * COLUMN DEFINITIONS — Single source of truth for column order, headers, classes.
- * إزالة: بوليصة (bolsa) + خصم (discount)
  * ترتيب جديد حسب المطلوب
  */
 const COL_DEFS = [
@@ -833,7 +678,7 @@ function formatSnapshotNumber(value) {
 function getSnapshotCellRawValue(row, col) {
   switch (col.key) {
     case 'kartano':
-      return row.kartano ?? row.kartaNo ?? row.karta ?? '';
+      return row.kartano ?? '';
     case 'date':
       return row.date ?? row.rowdate ?? '';
     case 'data':
@@ -1104,24 +949,6 @@ function renderTableSectionHeader() {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
           </svg>
           إضافة 4 صفوف
-        </button>
-        <button type="button" data-action="export-receipt-excel"
-          class="receipt-header-btn receipt-header-btn--teal"
-          title="تصدير الصفوف إلى Excel">
-          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-          </svg>
-          📤 تصدير Excel
-        </button>
-        <button type="button" data-action="import-receipt-excel"
-          class="receipt-header-btn receipt-header-btn--violet"
-          title="استيراد صفوف من Excel">
-          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0l-4 4m4-4v12"/>
-          </svg>
-          📥 استيراد Excel
         </button>
       </div>
     </div>`;
@@ -1692,7 +1519,6 @@ function addReceiptRow(count = 1) {
     newRow.dataset.calcAttached = '1';
     attachRowCalculation(newRow);
     fillFromPreviousRow(newRow);
-    attachKartaAutoFill(newRow);
     attachKeyboardNav(newRow);
     attachInputRestrictions(newRow);
     // Apply client's vehicle/driver datalists to new row
@@ -1723,7 +1549,6 @@ function addRowAfter(refRow) {
 
   newRow.dataset.calcAttached = '1';
   attachRowCalculation(newRow);
-  attachKartaAutoFill(newRow);
   attachKeyboardNav(newRow);
   attachInputRestrictions(newRow);
   ensureReceiptArrowRow();
@@ -2252,72 +2077,6 @@ function attachInputRestrictions(row) {
   });
 }
 
-// ─── KARTA AUTOFILL ───────────────────────────────────────────────────────────
-
-function attachKartaAutoFill(row) {
-  const kartaInput = row.querySelector('.receipt-kartano');
-  if (!kartaInput) return;
-
-  kartaInput.addEventListener('change', async function () {
-    const kartaNo  = this.value.trim();
-    const username = _currentUsername();
-    if (!kartaNo || !username) return;
-
-    if (!_bolsaRowsCache) {
-      _bolsaRowsCache = await ReceiptsModule.getBolsaForms(username);
-    }
-
-    let foundRow = null;
-    for (const form of _bolsaRowsCache) {
-      if (!form.rows) continue;
-      const match = form.rows.find(r => r.kartaNo && r.kartaNo.toString().trim() === kartaNo);
-      if (match) { foundRow = match; break; }
-    }
-    if (!foundRow) return;
-
-    const hasData = ['receipt-date', 'receipt-data', 'receipt-car', 'receipt-weight', 'receipt-weight2', 'receipt-office']
-      .some(cls => { const el = row.querySelector('.' + cls); return el && el.value.trim() !== ''; });
-
-    if (hasData && !confirm('⚠️ الصف فيه بيانات موجودة — هل تريد استبدالها ببيانات الكارتة؟')) return;
-
-    const set = (cls, val) => {
-      const el = row.querySelector('.' + cls);
-      if (el && val !== undefined && val !== null) el.value = val;
-    };
-
-    set('receipt-date',    foundRow.rowdate    || '');
-    set('receipt-data',    foundRow.driver     || '');
-    // receipt-owner removed from table
-    set('receipt-car',     foundRow.carNo      || '');
-    set('receipt-weight',  foundRow.weight     || '');
-    set('receipt-weight2', foundRow.weight2    || '');
-    set('receipt-type',    foundRow.type       || '');
-    set('receipt-ohda',    foundRow.ohda       || '');
-    set('receipt-noloon',  foundRow.noloon     || '');
-    // bolsa field محذوف من الواجهة — لا نحتاج set له
-
-    const officeInput = row.querySelector('.receipt-office');
-    if (officeInput && foundRow.office) {
-      officeInput.value = foundRow.office;
-      officeInput.dispatchEvent(new Event('change'));
-      setTimeout(function () {
-        set('receipt-loading', foundRow.loading   || '');
-        set('receipt-taktik',  foundRow.direction || '');
-        ['receipt-weight', 'receipt-weight2', 'receipt-deficit',
-         'receipt-noloon', 'receipt-ohda', 'receipt-office-amount',
-         'receipt-add'].forEach(cls => {
-          row.querySelector('.' + cls)?.dispatchEvent(new Event('input'));
-        });
-      }, 600);
-    }
-
-    ['receipt-weight', 'receipt-weight2', 'receipt-deficit',
-     'receipt-noloon', 'receipt-ohda', 'receipt-office-amount',
-     'receipt-add'].forEach(cls => {
-      row.querySelector('.' + cls)?.dispatchEvent(new Event('input'));
-    });
-  });
-}
 
 // ─── VEHICLE OWNER → PREVIOUS BALANCE ────────────────────────────────────────
 
@@ -2658,7 +2417,6 @@ async function collectReceiptRows() {
       car          : vehicle.plate,
       vehicle_id   : vehicle.id,
       vehicle_plate: vehicle.plate,
-      bolsa        : null, // محذوف من الواجهة — نحفظ null للتوافق مع البيانات القديمة
       loading      : normalizeOptionalString(_field(row, 'receipt-loading')),
       taktik       : normalizeOptionalString(_field(row, 'receipt-taktik')),
       type         : normalizeOptionalString(_field(row, 'receipt-type')),
@@ -2880,13 +2638,7 @@ async function saveReceipt() {
   rawData.account_type = null;
 
   try {
-    const saveResult = await ReceiptsModule.create(username, rawData);
-
-    // Feature 6: إظهار تحذير البوالص كـ alert مرئي للمستخدم (لا يمنع الحفظ)
-    if (saveResult?.warning) {
-      console.warn('[BolsaWarning]', saveResult.warning);
-      alert(`⚠️ ${saveResult.warning}`);
-    }
+    await ReceiptsModule.create(username, rawData);
 
     _vehicleAnalysisCache.clear();
     rawData.rows
@@ -3105,7 +2857,6 @@ function printReceipt() {
 // ─── CLEAR / CANCEL ───────────────────────────────────────────────────────────
 
 function clearReceiptSilent() {
-  _bolsaRowsCache   = null;
   _isSaving         = false;
   _vehicleAnalysisCache.clear();
   _exitEditMode();
@@ -3173,7 +2924,6 @@ function _exitEditMode() {
 
 async function loadReceiptForEdit(receiptData) {
   _enterReceiptEditMode(receiptData);
-  _bolsaRowsCache   = null;
 
   const setV = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
   setV('receiptDate',       receiptData.receipt_date   || receiptData.receiptDate   || '');
@@ -3252,7 +3002,6 @@ async function loadReceiptForEdit(receiptData) {
     setF('receipt-loading',       rowData.loading      || '');
     setF('receipt-taktik',        rowData.taktik       || '');
     setF('receipt-ohda',          rowData.ohda ? Money.fmt(rowData.ohda) : '');
-    // bolsa محذوف من الواجهة — البيانات القديمة محفوظة في rowData.bolsa
     setF('receipt-noloon',        rowData.noloon ? Money.fmt(rowData.noloon) : '');
     setF('receipt-office-amount', rowData.officeAmount ? Money.fmt(rowData.officeAmount) : '');
     setF('receipt-discount',      rowData.discount ? Money.fmt(rowData.discount) : '');
@@ -3262,7 +3011,6 @@ async function loadReceiptForEdit(receiptData) {
 
     tr.dataset.calcAttached = '1';
     attachRowCalculation(tr);
-    attachKartaAutoFill(tr);
     attachKeyboardNav(tr);
     attachInputRestrictions(tr);
   });
@@ -3421,153 +3169,6 @@ function attachPageListeners() {
       fillColumnDown(parseInt(fillBtn.dataset.colIndex, 10));
       return;
     }
-    // ── Excel Export ──────────────────────────────────────────────────────────
-    if (e.target.closest('[data-action="export-receipt-excel"]')) {
-      _handleReceiptExcelExport();
-      return;
-    }
-    // ── Excel Import ──────────────────────────────────────────────────────────
-    if (e.target.closest('[data-action="import-receipt-excel"]')) {
-      _handleReceiptExcelImport();
-      return;
-    }
-  });
-}
-
-// ─── EXCEL HANDLERS ───────────────────────────────────────────────────────────
-
-/**
- * Collects current form rows as plain objects, then exports to Excel.
- * Reads from DOM inputs — this is one of the few valid DOM reads in the system
- * because the receipt form has not been saved yet (no DB record exists at this point).
- */
-function _handleReceiptExcelExport() {
-  const tbody = document.getElementById('receiptTableBody');
-  if (!tbody) return;
-
-  const trs = [...tbody.querySelectorAll('tr')].filter(
-    r => r.id !== 'receiptFillArrowRow' && !r.classList.contains('vehicle-separator-row')
-  );
-
-  if (trs.length === 0) {
-    alert('لا توجد صفوف بيانات للتصدير.');
-    return;
-  }
-
-  // Build row objects from DOM inputs — consistent with COL_DEFS keys
-  const rows = trs.map(tr => ({
-    _type:        'data',
-    kartano:       tr.querySelector('.receipt-kartano')?.value       ?? '',
-    date:          tr.querySelector('.receipt-date')?.value          ?? '',
-    data:          tr.querySelector('.receipt-data')?.value          ?? '',
-    car:           tr.querySelector('.receipt-car')?.value           ?? '',
-    weight:        parseFloat(tr.querySelector('.receipt-weight')?.value)       || 0,
-    weight2:       parseFloat(tr.querySelector('.receipt-weight2')?.value)      || 0,
-    deficit:       parseFloat(tr.querySelector('.receipt-deficit')?.value)      || 0,
-    office:        tr.querySelector('.receipt-office')?.value        ?? '',
-    loading:       tr.querySelector('.receipt-loading')?.value       ?? '',
-    taktik:        tr.querySelector('.receipt-taktik')?.value        ?? '',
-    type:          tr.querySelector('.receipt-type')?.value          ?? '',
-    noloon:        parseFloat(tr.querySelector('.receipt-noloon')?.value)       || 0,
-    ohda:          parseFloat(tr.querySelector('.receipt-ohda')?.value)         || 0,
-    officeAmount:  parseFloat(tr.querySelector('.receipt-office-amount')?.value) || 0,
-    add:           parseFloat(tr.querySelector('.receipt-add')?.value)          || 0,
-    discount:      parseFloat(tr.querySelector('.receipt-discount')?.value)     || 0,
-    army:          parseFloat(tr.querySelector('.receipt-army')?.value)         || 0,
-    net:           parseFloat(tr.querySelector('.receipt-net')?.value)          || 0,
-  }));
-
-  try {
-    ExcelService.exportReceiptRows(rows);
-  } catch (err) {
-    console.error('[receipts] Excel export failed:', err);
-    alert(err.message || '❌ فشل تصدير Excel');
-  }
-}
-
-/**
- * Opens a file picker, imports rows from Excel, then fills the form.
- * Appends imported rows to any existing rows in the table.
- */
-function _handleReceiptExcelImport() {
-  ExcelService.openFilePicker(async (file) => {
-    try {
-      const importedRows = await ExcelService.importReceiptRows(file);
-
-      const tbody = document.getElementById('receiptTableBody');
-      if (!tbody) return;
-
-      for (const rowData of importedRows) {
-        // Add a new empty row using the existing system
-        receiptRowCounter++;
-        const tr = document.createElement('tr');
-        tr.innerHTML = _buildRowHTML();
-        tbody.appendChild(tr);
-        tr.dataset.calcAttached = '1';
-        attachRowCalculation(tr);
-        attachKartaAutoFill(tr);
-        attachKeyboardNav(tr);
-        attachInputRestrictions(tr);
-
-        // Fill values from imported data
-        const setVal = (cls, val) => {
-          const el = tr.querySelector('.' + cls);
-          if (el) el.value = val ?? '';
-        };
-
-        setVal('receipt-kartano',       rowData.kartano      ?? '');
-        setVal('receipt-date',          rowData.date         ?? '');
-        setVal('receipt-data',          rowData.data         ?? '');
-        setVal('receipt-car',           rowData.car          ?? '');
-        setVal('receipt-weight',        rowData.weight  !== 0 ? rowData.weight  : '');
-        setVal('receipt-weight2',       rowData.weight2 !== 0 ? rowData.weight2 : '');
-        setVal('receipt-deficit',       rowData.deficit !== 0 ? rowData.deficit : '');
-        setVal('receipt-office',        rowData.office       ?? '');
-        setVal('receipt-loading',       rowData.loading      ?? '');
-        setVal('receipt-taktik',        rowData.taktik       ?? '');
-        setVal('receipt-type',          rowData.type         ?? '');
-        setVal('receipt-noloon',        rowData.noloon  !== 0 ? rowData.noloon  : '');
-        setVal('receipt-ohda',          rowData.ohda    !== 0 ? rowData.ohda    : '');
-        setVal('receipt-office-amount', rowData.officeAmount !== 0 ? rowData.officeAmount : '');
-        setVal('receipt-add',           rowData.add     !== 0 ? rowData.add     : '');
-        setVal('receipt-discount',      rowData.discount !== 0 ? rowData.discount : '');
-        setVal('receipt-army',          rowData.army     !== 0 ? rowData.army     : '');
-
-        // PERFORMANCE FIX (was O(N²)):
-        // Previously, dispatching 'input' on every input in the row triggered
-        // calculateNet() multiple times per row, each of which called
-        // calculateTotals() — resulting in O(N × inputs) total calls.
-        //
-        // Instead, we compute weightTotal and net inline using the same formula
-        // as calculateNet() in attachRowCalculation, then set the readonly
-        // display fields directly.  calculateTotals() is called exactly once
-        // after all rows are inserted.
-        const _w1  = parseFloat(rowData.weight)       || 0;
-        const _w2  = parseFloat(rowData.weight2)      || 0;
-        const _d   = parseFloat(rowData.deficit)      || 0;
-        const _n   = parseFloat(rowData.noloon)       || 0;
-        const _o   = parseFloat(rowData.ohda)         || 0;
-        const _of  = parseFloat(rowData.officeAmount) || 0;
-        const _a   = parseFloat(rowData.add)          || 0;
-        const _disc = parseFloat(rowData.discount)     || 0;
-        const _arm  = parseFloat(rowData.army)         || 0;
-        const _wt  = (_w1 + _w2) - _d;
-        const _net = (_wt * _n) - (_o + _of + _disc) + _a + _arm;
-
-        const wtEl  = tr.querySelector('.receipt-weight-total');
-        const netEl = tr.querySelector('.receipt-net');
-        if (wtEl)  wtEl.value  = _wt.toFixed(2);
-        if (netEl) netEl.value = _net.toFixed(2);
-      }
-
-      // Recalculate all totals after all rows are filled
-      calculateTotals();
-
-      alert(`✅ تم استيراد ${importedRows.length} صف بنجاح.`);
-    } catch (err) {
-      console.error('[receipts] Excel import failed:', err);
-      alert(err.message || '❌ فشل استيراد Excel');
-    }
   });
 }
 
@@ -3610,9 +3211,6 @@ window.addEventListener('owners:changed', () => {
 });
 window.addEventListener('agents:changed', () => {
   loadClientsList();
-});
-window.addEventListener('bolsaForms:changed', () => {
-  _bolsaRowsCache = null;
 });
 window.addEventListener('offices:changed', () => {
   loadOfficesForReceipt();

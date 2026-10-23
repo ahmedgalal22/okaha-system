@@ -8,7 +8,6 @@ import { FinancialService } from './financial.js';
 import { AuthModule } from './auth.js';
 import { Money } from './money.js';
 import { printHTML } from './printEngine.js';
-import { ExcelService } from './excelService.js';
 
 
 // ========================================
@@ -155,7 +154,7 @@ async function deductFromAgent(username, agent_id, amount, bolsa_id, date = null
           date: isoDate,
           applied_at: new Date().toISOString(),
           is_reversed: false,
-          note: `خصم مندوب من تفريغ البوالص (${String(bolsa_id)})`,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsa_id)})`,
         },
       },
     ];
@@ -620,8 +619,6 @@ function _renderCustomersShell() {
             </div>
           </div>
           <button type="button" data-action="print-owners" class="ent-btn-print">🖨️ طباعة</button>
-          <button type="button" data-action="export-owners-excel" class="ent-btn-print" style="background:#0f766e;" title="تصدير أصحاب المركبات والوسطاء إلى Excel">📤 تصدير Excel</button>
-          <button type="button" data-action="import-owners-excel" class="ent-btn-print" style="background:#7c3aed;" title="استيراد أصحاب المركبات والوسطاء من Excel">📥 استيراد Excel</button>
         </div>
       </div>
 
@@ -1531,157 +1528,6 @@ async function _saveBalanceEntry() {
   await loadOwners();
 }
 
-// ─── EXCEL HANDLERS ───────────────────────────────────────────────────────────
-
-/**
- * Reads all active vehicle owners + brokers and exports them to ONE Excel
- * file with the 4-column layout:
- *   | اسم صاحب المركبة | رقم الهاتف | اسم الوسيط | رقم الهاتف |
- *
- * Brokers are scoped to the current session user (same filter used by
- * loadOwners()), so the export mirrors exactly what the user sees on the
- * page. Owners are global (not username-scoped) — same as the UI.
- */
-async function _handleExportOwnersExcel() {
-  try {
-    const username = _currentUsername();
-
-    // Owners — active only, name required.
-    const allOwners = await DB.getAll('vehicleOwners');
-    const owners = allOwners
-      .filter(o => o.deleted_at === null && o.name)
-      .map(o => ({
-        name:  String(o.name  || '').trim(),
-        phone: String(o.phone || '').trim(),
-      }))
-      .filter(o => o.name);
-
-    // Brokers — agents store, agent_kind !== 'mandoub', owned by this user.
-    // Mirrors the filter used inside loadOwners() so the export matches the UI.
-    const allAgents = await DB.getAll('agents');
-    const brokers = allAgents
-      .filter(a =>
-        a.deleted_at === null
-        && a.agent_kind !== 'mandoub'
-        && a.name
-        && _isAgentOwnedBy(a, username)
-      )
-      .map(a => ({
-        name:  String(a.name  || '').trim(),
-        phone: String(a.phone || '').trim(),
-      }))
-      .filter(b => b.name);
-
-    if (owners.length === 0 && brokers.length === 0) {
-      alert('لا توجد أسماء للتصدير.');
-      return;
-    }
-
-    ExcelService.exportEntitiesExcel({ owners, brokers });
-  } catch (err) {
-    console.error('[entities] Excel export entities failed:', err);
-    alert(err.message || '❌ فشل تصدير Excel');
-  }
-}
-
-/**
- * Adds a broker (agent with agent_kind='broker') to the DB.
- * Mirrors the duplicate-check logic used by the "Add Broker" modal in
- * _saveAddedNames() to keep behavior consistent across entry paths.
- *
- * Returns:
- *   'added'        — broker was inserted
- *   'skipped-dup'  — a non-mandoub agent with the same name already exists
- *
- * Throws on unexpected DB errors.
- */
-async function _addBrokerFromImport(username, name, phone) {
-  const trimmedName = String(name || '').trim();
-  if (!trimmedName) return 'skipped-dup';
-
-  const allAgents = await DB.getAll('agents');
-  const exists = allAgents.some(a =>
-    a.deleted_at === null
-    && a.agent_kind !== 'mandoub'
-    && String(a.name || '').trim().toLowerCase() === trimmedName.toLowerCase()
-  );
-  if (exists) return 'skipped-dup';
-
-  await DB.add('agents', {
-    username,
-    name: trimmedName,
-    phone: (String(phone || '').trim() || null),
-    notes: null,
-    office_id: null,
-    agent_kind: 'broker',
-  }, { username });
-
-  return 'added';
-}
-
-/**
- * Opens a file picker, parses owners + brokers from the combined Excel
- * file, then writes each list into its own store. Duplicates (case-
- * insensitive trimmed-name match) are silently skipped per spec — phone
- * mismatches do NOT overwrite existing records.
- */
-function _handleImportOwnersExcel() {
-  ExcelService.openFilePicker(async (file) => {
-    try {
-      const username = _currentUsername();
-      const { owners, brokers } = await ExcelService.importEntitiesExcel(file);
-
-      let ownersAdded = 0, ownersSkipped = 0;
-      let brokersAdded = 0, brokersSkipped = 0;
-      const errors = [];
-
-      // ── Owners → vehicleOwners store ──────────────────────────────────
-      for (const { name, phone } of owners) {
-        try {
-          await createOwner(username, { name, phone });
-          ownersAdded++;
-        } catch (err) {
-          // createOwner throws when the name already exists — skip silently
-          // per spec (do NOT overwrite existing phone/data).
-          if (String(err.message || '').includes('مستخدم بالفعل')) {
-            ownersSkipped++;
-          } else {
-            errors.push(`صاحب مركبة "${name}": ${err.message}`);
-          }
-        }
-      }
-
-      // ── Brokers → agents store (agent_kind='broker') ─────────────────
-      for (const { name, phone } of brokers) {
-        try {
-          const result = await _addBrokerFromImport(username, name, phone);
-          if (result === 'added')        brokersAdded++;
-          else if (result === 'skipped-dup') brokersSkipped++;
-        } catch (err) {
-          errors.push(`وسيط "${name}": ${err.message}`);
-        }
-      }
-
-      // Single refresh + single dispatch per affected store.
-      await loadOwners();
-      if (ownersAdded  > 0) window.dispatchEvent(new CustomEvent('owners:changed'));
-      if (brokersAdded > 0) window.dispatchEvent(new CustomEvent('agents:changed'));
-
-      const parts = [];
-      if (ownersAdded   > 0) parts.push(`✅ تم إضافة ${ownersAdded} صاحب مركبة`);
-      if (ownersSkipped > 0) parts.push(`⏭️ تم تخطي ${ownersSkipped} صاحب مركبة موجود مسبقاً`);
-      if (brokersAdded  > 0) parts.push(`✅ تم إضافة ${brokersAdded} وسيط`);
-      if (brokersSkipped > 0) parts.push(`⏭️ تم تخطي ${brokersSkipped} وسيط موجود مسبقاً`);
-      if (errors.length > 0) parts.push(`❌ أخطاء: ${errors.join('، ')}`);
-
-      alert(parts.join('\n') || 'لم يتم إضافة أي اسم.');
-    } catch (err) {
-      console.error('[entities] Excel import entities failed:', err);
-      alert(err.message || '❌ فشل استيراد Excel');
-    }
-  });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 function attachOwnersPageListeners() {
@@ -1750,20 +1596,6 @@ function attachOwnersPageListeners() {
       _printEntities('all');
       return;
     }
-
-    // ── Export owners to Excel ──
-    if (e.target.closest('[data-action="export-owners-excel"]')) {
-      await _handleExportOwnersExcel();
-      return;
-    }
-
-    // ── Import owners from Excel ──
-    if (e.target.closest('[data-action="import-owners-excel"]')) {
-      _handleImportOwnersExcel();
-      return;
-    }
-
-
 
     const tab = e.target.closest('[data-account-tab]');
     if (tab) {

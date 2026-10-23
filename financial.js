@@ -74,16 +74,13 @@ function _toKey(value) {
 function _calcBolsaTotals(rows, addition = 0) {
   const list = Array.isArray(rows) ? rows : [];
   let ohda = 0;
-  let dokhan = 0;
   for (const r of list) {
-    ohda   += Number(r?.ohda)   || 0;
-    dokhan += Number(r?.dokhan) || 0;
+    ohda += Number(r?.ohda) || 0;
   }
   const add = Money.round(Number(addition) || 0);
-  const grand_total = Money.round(ohda + dokhan + add);
+  const grand_total = Money.round(ohda + add);
   return {
     ohda: Money.round(ohda),
-    dokhan: Money.round(dokhan),
     addition: add,
     grand_total,
   };
@@ -118,25 +115,6 @@ function _emit(eventName) {
 // One pipeline for validation + normalization, used by both create and
 // update paths so the integrity rules can never diverge.
 //
-// IndexedDB note: structured invariants that span multiple records (here:
-// "karta numbers are globally unique across all bolsa forms of this user")
-// cannot be enforced by IndexedDB itself because karta numbers live inside
-// a nested JSON `rows` array.  We perform the cross-record scan INSIDE the
-// transaction's getAll() to minimise the race window:
-//
-//   * Best-effort guarantee in IDB.  An IDB readwrite transaction holds
-//     locks on the listed stores for the duration of the callback, so two
-//     simultaneous saves serialize.  Within a single tab, this fully
-//     prevents collisions.
-//   * Cross-tab guarantee in IDB.  IDB readwrite txs across different
-//     connections also serialize per store.  Two tabs cannot both pass
-//     this check and both commit — the second one will see the first
-//     one's rows when it re-reads inside its own tx.
-//   * MySQL migration: replace the JS scan with a UNIQUE constraint on a
-//     normalized `bolsa_rows.karta_no` column.  The check function below
-//     can stay as a pre-flight UX validator (fail-fast) while the DB
-//     enforces the real invariant.
-//
 // MIGRATION-FRIENDLY SHAPE:
 //   The function is pure (no side effects), takes the transaction handle,
 //   and returns nothing on success / throws on failure.  When migrating,
@@ -144,30 +122,21 @@ function _emit(eventName) {
 //
 
 async function _assertBolsaIntegrity(tx, username, payload, opts) {
-  const { rows, excludeFormId = null } = payload;
+  const { rows } = payload;
   const list = Array.isArray(rows) ? rows : [];
   if (list.length === 0) {
     throw new Error('❌ يجب إضافة صف واحد على الأقل');
   }
 
-  // Step 1 — per-row required fields + intra-form karta uniqueness.
-  const seen = new Set();
+  // Step 1 — per-row required fields.
   for (const r of list) {
-    const kartaNo = String(r?.kartaNo ?? '').trim();
     const ownerName = String(r?.owner_name ?? '').trim();
-    if (!kartaNo)   throw new Error('❌ رقم الكارتة مطلوب في كل صف');
     if (!ownerName) throw new Error('❌ اسم صاحب المركبة مطلوب');
-    if (seen.has(kartaNo)) {
-      throw new Error(`❌ رقم الكارتة مكرر داخل نفس النموذج: ${kartaNo}`);
-    }
-    seen.add(kartaNo);
   }
 
-  // Step 2 — owner whitelist (must exist + not soft-deleted).
-  // TASK D (Phase 2) — scoped to current tenant via by_username index.
-  // Previously read globally with tx.getAll('vehicleOwners') which let a
-  // bolsa for tenant A reference an owner name that only existed in
-  // tenant B.  After MySQL migration this becomes the natural FK scope.
+  // Step 2 — owner whitelist (must exist + not soft-deleted), scoped to the
+  // current tenant via the by_username index.  After a SQL migration this
+  // becomes the natural FK scope.
   const allOwners = await tx.getByIndex('vehicleOwners', 'by_username', username);
   const ownerNames = new Set(
     allOwners
@@ -178,21 +147,6 @@ async function _assertBolsaIntegrity(tx, username, payload, opts) {
     const ownerName = String(r.owner_name).trim();
     if (!ownerNames.has(ownerName)) {
       throw new Error(`❌ اسم صاحب المركبة غير موجود في قاعدة البيانات: ${ownerName}`);
-    }
-  }
-
-  // Step 3 — global karta uniqueness, scoped to the current user, excluding
-  // the form being edited (so re-saving an existing form is allowed).
-  // Read inside the same tx → other readwrite txs on bolsaForms wait.
-  const allForms = await tx.getByIndex('bolsaForms', 'by_username', username);
-  for (const form of allForms) {
-    if (excludeFormId && String(form.id) === String(excludeFormId)) continue;
-    const formRows = Array.isArray(form?.rows) ? form.rows : [];
-    for (const fr of formRows) {
-      const k = String(fr?.kartaNo ?? '').trim();
-      if (k && seen.has(k)) {
-        throw new Error(`❌ رقم الكارتة مستخدم بالفعل في بوالص أخرى: ${k}`);
-      }
     }
   }
 }
@@ -206,7 +160,6 @@ function _normalizeBolsaRow(r) {
   };
   const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
   return {
-    kartaNo:    str(r?.kartaNo),
     rowdate:    str(r?.rowdate),
     driver:     str(r?.driver),
     owner_name: str(r?.owner_name),
@@ -218,12 +171,7 @@ function _normalizeBolsaRow(r) {
     direction:  str(r?.direction),
     type:       str(r?.type),
     ohda:       num(r?.ohda),
-    dokhan:     num(r?.dokhan),
     noloon:     num(r?.noloon),
-    solar:      num(r?.solar),
-    notes:      str(r?.notes),
-    used_in_receipt: r?.used_in_receipt === true,
-    used_receipt_id: r?.used_receipt_id ?? null,
   };
 }
 
@@ -599,9 +547,8 @@ async function updateReceipt(username, id, data, extraOps = []) {
   };
 
   const applyOps = _buildApplyOps(username, clean, id);
-  // Phase 2 TASK E — extraOps lets the caller (ReceiptsModule.update) atomically
-  // unlink stale used_receipt_id references in bolsaForms and re-link new ones,
-  // all inside the same DB transaction as the receipt update.
+  // extraOps lets the caller attach additional atomic ops to the same
+  // DB transaction as the receipt update.
   const allTxOps = [updateOp, ...applyOps, ...extraOps];
   const txResult = await DB.transaction(async (tx) => {
     const existing = await tx.getById(STORE.RECEIPTS, id);
@@ -635,11 +582,9 @@ async function deleteReceipt(username, id, extraOps = []) {
   if (!username) throw new Error('[FinancialService:delete] username is required.');
   if (!id)       throw new Error('[FinancialService:delete] id is required.');
 
-  // Phase 2 TASK E — extraOps lets the caller atomically unlink any bolsa
-  // rows that pointed back to this receipt.  They are inserted BEFORE the
-  // receipt delete op so the soft-deleted receipt remains the last op,
-  // preserving the existing result-shape contract (caller still reads the
-  // deleted receipt from allResults[length-1]-equivalent index).
+  // extraOps are inserted BEFORE the receipt delete op so the soft-deleted
+  // receipt remains the last op, preserving the result-shape contract
+  // (caller still reads the deleted receipt from the final result index).
   const txResult = await DB.transaction(async (tx) => {
     const existing = await tx.getById(STORE.RECEIPTS, id);
     if (!existing) {
@@ -1155,7 +1100,7 @@ async function createBolsaForm(username, data) {
     }
 
     // Unified integrity check: in-tx so it serializes with concurrent saves.
-    await _assertBolsaIntegrity(tx, username, { rows, excludeFormId: null });
+    await _assertBolsaIntegrity(tx, username, { rows });
 
     const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
     const ops = [
@@ -1170,7 +1115,6 @@ async function createBolsaForm(username, data) {
           rows,
           totals: {
             ohda: totals.ohda,
-            dokhan: totals.dokhan,
             addition: totals.addition, // FIX #1 — persist addition
             grand_total: grandTotal,
           },
@@ -1199,7 +1143,7 @@ async function createBolsaForm(username, data) {
           date: bolsaDate,
           applied_at: new Date().toISOString(),
           is_reversed: false,
-          note: `خصم مندوب من تفريغ البوالص (${String(bolsaId)})`,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
     ];
@@ -1279,10 +1223,8 @@ async function updateBolsaForm(username, id, data) {
       throw new Error('[FinancialService:updateBolsaForm] cross-user access is forbidden.');
     }
 
-    // FIX #2 — UPDATE now enforces the same integrity rules as CREATE.
-    // FIX #3 — uniqueness scan runs INSIDE the tx, excluding the form
-    // being edited so re-saving an existing form is allowed.
-    await _assertBolsaIntegrity(tx, username, { rows, excludeFormId: bolsaId });
+    // UPDATE enforces the same integrity rules as CREATE, inside the tx.
+    await _assertBolsaIntegrity(tx, username, { rows });
 
     const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
     const oldAgentKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
@@ -1347,7 +1289,6 @@ async function updateBolsaForm(username, id, data) {
           rows,
           totals: {
             ohda: totals.ohda,
-            dokhan: totals.dokhan,
             addition: totals.addition, // FIX #1 — persist addition
             grand_total: nextGrandTotal,
           },
@@ -1370,7 +1311,7 @@ async function updateBolsaForm(username, id, data) {
           date: bolsaDate,
           applied_at: new Date().toISOString(),
           is_reversed: false,
-          note: `خصم مندوب من تفريغ البوالص (${String(bolsaId)})`,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
     ];

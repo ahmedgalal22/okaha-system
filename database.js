@@ -261,15 +261,16 @@ const DB = (() => {
     },
 
     /**
-     * bolsaForms: hawala / bolsa form records.
-     * Each record contains a `rows` array used by the karta auto-fill feature
-     * in receipt-page.js.
+     * bolsaForms: bolsa registration form records (تسجيل البوالص).
      *
      * Key fields:
      *   username    : FK → users.username
      *   bolsa_date  : ISO date
-     *   rows        : Array<{ kartaNo, driver, carNo, weight, weight2,
-     *                         office, loading, direction, noloon, ohda, ... }>
+     *   agent_id    : FK → agents.id (mandoub)
+     *   rows        : Array<{ rowdate, driver, owner_name, carNo, weight,
+     *                         weight2, office, loading, direction, type,
+     *                         ohda, noloon }>
+     *   totals      : { ohda, addition, grand_total } (decimals)
      */
     bolsaForms: {
       name          : 'bolsaForms',

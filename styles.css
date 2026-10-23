@@ -1551,7 +1551,6 @@ input {
 #receiptBalance,
 #paidAmount,
 #bolsaTotalOhda,
-#bolsaTotalDokhan,
 #bolsaGrandTotal {
   font-variant-numeric: tabular-nums;
   direction: ltr;
@@ -1781,7 +1780,7 @@ input[type="number"] {
 
 
 /* ═══════════════════════════════════════════════════════════
-   11. ALL RECEIPTS PAGE — جميع نماذج الصرف والتفريغ
+   11. ALL RECEIPTS PAGE — جميع نماذج الصرف
        Visual refinement to match design specification exactly
    ═══════════════════════════════════════════════════════════ */
 
@@ -1872,12 +1871,6 @@ input[type="number"] {
 .all-tab[data-tab="receipts"].is-active {
   color: #2563eb;
   border-bottom-color: #2563eb;
-}
-
-/* ── Bolsas tab active: emerald/teal ── */
-.all-tab[data-tab="bolsas"].is-active {
-  color: #0f766e;
-  border-bottom-color: #0f766e;
 }
 
 /* ── Panel containers ── */
@@ -2065,26 +2058,6 @@ input[type="number"] {
   transform: translateY(-1px);
 }
 
-/* ── Apply filter button — bolsas tab: emerald ── */
-.apply-btn--bolsas {
-  background: linear-gradient(135deg, #0f766e, #0d9488);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 20px;
-  font-size: 0.875rem;
-  font-weight: 700;
-  cursor: pointer;
-  font-family: inherit;
-  transition: box-shadow 0.25s ease, transform 0.25s ease;
-  white-space: nowrap;
-}
-
-.apply-btn--bolsas:hover {
-  box-shadow: 0 4px 14px rgba(15, 118, 110, 0.40);
-  transform: translateY(-1px);
-}
-
 /* ── PDF export button: red ── */
 .pdf-btn {
   background: linear-gradient(135deg, #dc2626, #b91c1c);
@@ -2105,24 +2078,6 @@ input[type="number"] {
   transform: translateY(-1px);
 }
 
-.excel-btn {
-  background: linear-gradient(135deg, #16a34a, #15803d);
-  color: #fff;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 20px;
-  font-size: 0.875rem;
-  font-weight: 700;
-  cursor: pointer;
-  font-family: inherit;
-  transition: box-shadow 0.25s ease, transform 0.25s ease;
-  white-space: nowrap;
-}
-
-.excel-btn:hover {
-  box-shadow: 0 4px 14px rgba(22, 163, 74, 0.40);
-  transform: translateY(-1px);
-}
 
 /* ─────────────────────────────────────────
    SUMMARY CARDS GRID — إجماليات
@@ -2274,13 +2229,6 @@ input[type="number"] {
   border-bottom: 2px solid #f1f5f9;
 }
 
-/* ── Card header — bolsa cards (emerald gradient) ── */
-.record-card__header--emerald {
-  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
-  border-bottom: none;
-  color: #ffffff;
-}
-
 /* ── Heading block inside header ── */
 .record-card__heading {
   flex: 1;
@@ -2295,11 +2243,6 @@ input[type="number"] {
   line-height: 1.3;
 }
 
-/* For emerald header, h3 is white */
-.record-card__header--emerald .record-card__heading h3 {
-  color: #ffffff;
-}
-
 /* ── Accent subtitle line — owner · recipient · receipt# · company ── */
 .record-card__heading p {
   margin: 0 0 4px;
@@ -2307,11 +2250,6 @@ input[type="number"] {
   font-weight: 600;
   color: #2563eb;
   line-height: 1.4;
-}
-
-/* For emerald header, subtitle is white with opacity */
-.record-card__header--emerald .record-card__heading p {
-  color: rgba(255, 255, 255, 0.90);
 }
 
 /* ── Meta line (status / save time) ── */
@@ -2326,12 +2264,6 @@ input[type="number"] {
   border-radius: 999px;
   background: #eff6ff;
   color: #1d4ed8;
-}
-
-/* For emerald header, meta is white pill */
-.record-card__header--emerald .record-card__meta {
-  background: rgba(255, 255, 255, 0.20);
-  color: #ffffff;
 }
 
 /* ── Action buttons row ── */
@@ -2433,40 +2365,6 @@ input[type="number"] {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
 }
 
-/* Emerald header: white action buttons with colored text */
-.record-card__header--emerald .record-card__actions button[data-action="edit-bolsa"] {
-  background: rgba(255, 255, 255, 0.95);
-  color: #b45309;
-  border: none;
-}
-.record-card__header--emerald .record-card__actions button[data-action="edit-bolsa"]:hover {
-  background: #ffffff;
-  color: #92400e;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.record-card__header--emerald .record-card__actions button[data-action="print-bolsa"] {
-  background: rgba(255, 255, 255, 0.95);
-  color: #7c3aed;
-  border: none;
-}
-.record-card__header--emerald .record-card__actions button[data-action="print-bolsa"]:hover {
-  background: #ffffff;
-  color: #6d28d9;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.record-card__header--emerald .record-card__actions button[data-action="delete-bolsa"] {
-  background: rgba(255, 255, 255, 0.95);
-  color: #dc2626;
-  border: none;
-}
-.record-card__header--emerald .record-card__actions button[data-action="delete-bolsa"]:hover {
-  background: #ffffff;
-  color: #b91c1c;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
 /* ── Table wrapper inside card ── */
 .record-card__table-wrap {
   overflow-x: auto;
@@ -2505,15 +2403,6 @@ input[type="number"] {
 }
 
 .record-table thead th:first-child { border-right: none; }
-
-/* Table header — bolsa: emerald */
-.record-table--emerald thead tr {
-  background: linear-gradient(135deg, #0f766e, #0d9488);
-}
-
-.record-table--emerald thead th {
-  border-left: 1px solid rgba(255, 255, 255, 0.15);
-}
 
 /* Table body rows */
 .record-table tbody tr {
@@ -2584,23 +2473,6 @@ input[type="number"] {
   direction: ltr;
   unicode-bidi: embed;
 }
-
-/* Bolsa footer — emerald tint */
-.record-card__footer--emerald {
-  background: #f0fdfa;
-  border-top: 1px solid #a7f3d0;
-}
-
-.record-card__footer--emerald > div {
-  border-color: #a7f3d0;
-}
-
-/* Bolsa footer value colors by position */
-.record-card__footer--emerald > div:nth-child(1) strong { color: #374151; }
-.record-card__footer--emerald > div:nth-child(2) strong { color: #0f766e; }
-.record-card__footer--emerald > div:nth-child(3) strong { color: #1d4ed8; }
-.record-card__footer--emerald > div:nth-child(4) strong { color: #ea580c; }
-.record-card__footer--emerald > div:nth-child(5) strong { color: #6d28d9; }
 
 /* ─────────────────────────────────────────
    SR-ONLY (accessibility)

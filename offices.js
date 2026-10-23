@@ -1190,7 +1190,7 @@ async function _getOfficeCards(office) {
         receipt_date: receipt.receipt_date || '',
         row_index: i,
         _rowId: row._rowId || null,
-        kartano: row.kartano || row.kartaNo || '',
+        kartano: row.kartano || '',
         date: row.date || '',
         car: row.car || row.carNo || row.vehicle_plate || '',
         driver: row.data || row.driver || row.driver_name || '',
