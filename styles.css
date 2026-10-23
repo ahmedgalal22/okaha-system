@@ -1549,9 +1549,7 @@ input {
 .separator-subtotal,
 #totalAmount,
 #receiptBalance,
-#paidAmount,
-#bolsaTotalOhda,
-#bolsaGrandTotal {
+#paidAmount {
   font-variant-numeric: tabular-nums;
   direction: ltr;
   unicode-bidi: embed;
@@ -1945,15 +1943,6 @@ input[type="number"] {
   background-color: #ffffff;
 }
 
-/* Bolsa agent field with emerald focus border */
-.filter-grid .agent-filter:focus {
-  border-color: #0f766e;
-  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
-}
-.filter-grid .agent-filter {
-  border-color: #a7f3d0;
-}
-
 /* Date input: no search icon, just calendar icon from browser */
 .filter-grid input[type="date"] {
   background-image: none;
@@ -2202,7 +2191,7 @@ input[type="number"] {
 }
 
 /* ─────────────────────────────────────────
-   RECORD CARD — each form/bolsa card
+   RECORD CARD — each receipt form card
    ───────────────────────────────────────── */
 .record-card {
   background: #ffffff;
@@ -2298,37 +2287,31 @@ input[type="number"] {
 }
 
 /* تعديل — blue */
-.record-card__actions button[data-action="edit-receipt"],
-.record-card__actions button[data-action="edit-bolsa"] {
+.record-card__actions button[data-action="edit-receipt"] {
   background: #2563eb;
   color: #ffffff;
 }
-.record-card__actions button[data-action="edit-receipt"]:hover,
-.record-card__actions button[data-action="edit-bolsa"]:hover {
+.record-card__actions button[data-action="edit-receipt"]:hover {
   background: #1d4ed8;
   box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
 }
 
 /* طباعة — purple */
-.record-card__actions button[data-action="print-receipt"],
-.record-card__actions button[data-action="print-bolsa"] {
+.record-card__actions button[data-action="print-receipt"] {
   background: #7c3aed;
   color: #ffffff;
 }
-.record-card__actions button[data-action="print-receipt"]:hover,
-.record-card__actions button[data-action="print-bolsa"]:hover {
+.record-card__actions button[data-action="print-receipt"]:hover {
   background: #6d28d9;
   box-shadow: 0 4px 12px rgba(124, 58, 237, 0.35);
 }
 
 /* حذف — red */
-.record-card__actions button[data-action="delete-receipt"],
-.record-card__actions button[data-action="delete-bolsa"] {
+.record-card__actions button[data-action="delete-receipt"] {
   background: #dc2626;
   color: #ffffff;
 }
-.record-card__actions button[data-action="delete-receipt"]:hover,
-.record-card__actions button[data-action="delete-bolsa"]:hover {
+.record-card__actions button[data-action="delete-receipt"]:hover {
   background: #b91c1c;
   box-shadow: 0 4px 12px rgba(220, 38, 38, 0.35);
 }

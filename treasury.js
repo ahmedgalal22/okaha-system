@@ -8,7 +8,6 @@
  *   salfa             ← سلفة لعميل/وسيط/شخص آخر
  *   expense           ← مصروف
  *   salary            ← مرتب
- *   bolsa_deduction   ← خصم بوالص من مندوب (من createBolsaForm)
  *   mandoub_cash_out  ← إيداع فلوس للمندوب (من adjustMandoubBalance)
  *   mandoub_cash_in   ← استلام فلوس من المندوب (من adjustMandoubBalance)
  */
@@ -38,7 +37,6 @@ const EFFECTS = Object.freeze({
   SALFA            : 'salfa',
   EXPENSE          : 'expense',
   SALARY           : 'salary',
-  BOLSA_DEDUCTION  : 'bolsa_deduction',
   MANDOUB_CASH_OUT : 'mandoub_cash_out',
   MANDOUB_CASH_IN  : 'mandoub_cash_in',
 });
@@ -80,7 +78,6 @@ function _effectLabel(effect) {
     case EFFECTS.SALFA:            return 'سلفة';
     case EFFECTS.EXPENSE:          return 'مصروف';
     case EFFECTS.SALARY:           return 'مرتب';
-    case EFFECTS.BOLSA_DEDUCTION:  return 'خصم بوالص';
     case EFFECTS.MANDOUB_CASH_OUT: return 'إيداع للمندوب';
     case EFFECTS.MANDOUB_CASH_IN:  return 'استلام من المندوب';
     default: return effect || '—';
@@ -364,7 +361,6 @@ async function getSummary(username, filters = null) {
   let total_salfa = 0;
   let total_expense = 0;
   let total_mandoub = 0;
-  let total_bolsa = 0;
 
   for (const e of entries) {
     const amt = Number(e.amount) || 0;
@@ -375,7 +371,6 @@ async function getSummary(username, filters = null) {
     if (e.effect === EFFECTS.SALFA) total_salfa += amt;
     if (e.effect === EFFECTS.EXPENSE || e.effect === EFFECTS.SALARY) total_expense += amt;
     if (e.effect === EFFECTS.MANDOUB_CASH_OUT) total_mandoub += amt;
-    if (e.effect === EFFECTS.BOLSA_DEDUCTION) total_bolsa += amt;
   }
 
   // Full balance (no date filter — always from start)
@@ -395,7 +390,6 @@ async function getSummary(username, filters = null) {
     total_salfa: Money.toDecimal(total_salfa),
     total_expense: Money.toDecimal(total_expense),
     total_mandoub: Money.toDecimal(total_mandoub),
-    total_bolsa: Money.toDecimal(total_bolsa),
   };
 }
 

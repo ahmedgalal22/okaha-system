@@ -5,7 +5,6 @@
 import { DB }          from './database.js';
 import { AuthModule }  from './auth.js';
 import { initReceiptPage } from './receipts.js';
-import { initBolsaPage } from './bolsas.js';
 import { initAllReceiptsPage } from './allReceipts.js';
 import { attachOwnersPageListeners, loadOwners } from './entities.js';
 import { attachOfficesPageListeners, initOfficesPage, loadOffices } from './offices.js';
@@ -15,7 +14,6 @@ import { initSidebarLayout } from './sidebarLayout.js';
 import { initDashboardPage } from './dashboard.js';
 import './entities.js';
 
-let _bolsaInited = false;
 const LAST_PAGE_KEY = 'financial_last_page';
 const LAST_PAGE_CTX_KEY = 'financial_last_page_ctx';
 const PAGE_MAP = {
@@ -23,8 +21,6 @@ const PAGE_MAP = {
   dashboardPage: 'dashboardPage',
   receipt: 'receiptPage',
   allReceipts: 'allReceiptsPage',
-  bolsa: 'bolsaPage',
-  bolsaPage: 'bolsaPage',
   ownersPage: 'ownersPage',
   ownerDetailsPage: 'ownerDetailsPage',
   agentDetailsPage: 'agentDetailsPage',
@@ -39,8 +35,6 @@ const PAGE_KEY_NORMALIZE = {
   receiptPage: 'receipt',
   allReceipts: 'allReceipts',
   allReceiptsPage: 'allReceipts',
-  bolsa: 'bolsaPage',
-  bolsaPage: 'bolsaPage',
   ownersPage: 'ownersPage',
   ownerDetailsPage: 'ownerDetailsPage',
   agentDetailsPage: 'agentDetailsPage',
@@ -69,7 +63,7 @@ function _readLastPageContext() {
 }
 
 function _resolvePageElement(pageName) {
-  // allow passing direct section id (e.g. "bolsaPage")
+  // allow passing direct section id (e.g. "receiptPage")
   const direct = document.getElementById(pageName);
   if (direct) return direct;
   return document.getElementById(PAGE_MAP[pageName]);
@@ -120,12 +114,6 @@ async function showPage(pageName) {
   }
   if (pageName === 'officesPage' || targetId === 'officesPage') {
     await loadOffices();
-  }
-  if (pageName === 'bolsaPage' || pageName === 'bolsa' || targetId === 'bolsaPage') {
-    if (!_bolsaInited) {
-      initBolsaPage();
-      _bolsaInited = true;
-    }
   }
   if (pageName === 'allReceipts' || targetId === 'allReceiptsPage') {
     await initAllReceiptsPage();
@@ -360,14 +348,15 @@ async function _importFullBackup() {
       const storeNames = Object.keys(backup.stores);
       const knownStores = Object.keys(DB.STORES);
       const unknownStores = storeNames.filter(s => !knownStores.includes(s));
-      if (unknownStores.length > 0) {
-        alert(`❌ الملف يحتوي على بيانات غير معروفة: ${unknownStores.join(', ')}`);
+      const importableStores = storeNames.filter(s => knownStores.includes(s));
+      if (importableStores.length === 0) {
+        alert('❌ الملف لا يحتوي على أي جداول معروفة في النسخة الحالية من النظام');
         return;
       }
 
       // Count records
       let totalRecords = 0;
-      for (const store of storeNames) {
+      for (const store of importableStores) {
         if (!Array.isArray(backup.stores[store])) {
           alert(`❌ بيانات المتجر "${store}" غير صالحة`);
           return;
@@ -382,8 +371,10 @@ async function _importFullBackup() {
       // Double confirmation
       const msg = `⚠️ هل أنت متأكد من استيراد هذه النسخة الاحتياطية؟\n\n` +
         `📅 تاريخ النسخة: ${exportDate}\n` +
-        `📦 عدد الجداول: ${storeNames.length}\n` +
-        `📊 عدد السجلات: ${totalRecords}\n\n` +
+        `📦 عدد الجداول: ${importableStores.length}\n` +
+        `📊 عدد السجلات: ${totalRecords}\n` +
+        (unknownStores.length > 0 ? `ℹ️ سيتم تجاهل بيانات غير موجودة في النسخة الحالية: ${unknownStores.join(', ')}\n` : '') +
+        `\n` +
         `⚠️ سيتم حذف جميع البيانات الحالية واستبدالها بالنسخة الاحتياطية.\n` +
         `⚠️ يُنصح بإنشاء نسخة احتياطية من البيانات الحالية أولاً.\n\n` +
         `هل تريد المتابعة؟`;
@@ -393,7 +384,7 @@ async function _importFullBackup() {
 
       // Perform import — clear all stores then write backup data
       const db = _getDbInstance();
-      const storesToImport = storeNames.filter(s => db.objectStoreNames.contains(s));
+      const storesToImport = importableStores.filter(s => db.objectStoreNames.contains(s));
 
       await new Promise((resolve, reject) => {
         const tx = db.transaction(storesToImport, 'readwrite');

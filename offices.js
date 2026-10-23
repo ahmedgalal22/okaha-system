@@ -15,7 +15,6 @@ import { Money } from './money.js';
 
 const STORE = 'offices';
 const RECEIPTS_STORE = 'receipts';
-const BOLSA_STORE = 'bolsaForms';
 
 const _hamolaCache = new Map();
 
@@ -336,14 +335,6 @@ function _calcReceiptNet(row) {
   return ((w1 + w2) - d) * n - (ohda + officeAmount + discount) + add;
 }
 
-function _calcBolsaNet(row) {
-  const total = Number(row.total);
-  if (Number.isFinite(total)) return total;
-  const w = (Number(row.weight) || 0) + (Number(row.weight2) || 0);
-  const price = Number(row.price) || 0;
-  return price * w;
-}
-
 function _resolveRange(filters) {
   if (!filters || typeof filters !== 'object') return null;
 
@@ -398,47 +389,28 @@ async function getOfficeFinancialSummary(username, filters = null) {
   }
 
   const range = _resolveRange(filters);
-  const useBolsa = Boolean(range);
 
-  if (useBolsa) {
-    const forms = await DB.findByFields(BOLSA_STORE, { username });
-    const filtered = range
-      ? forms.filter((f) => {
-          const t = new Date(f.bolsa_date || 0).getTime();
-          return t >= range.from && t <= range.to;
-        })
-      : forms;
+  const allReceipts = await DB.findByFields(RECEIPTS_STORE, { username });
+  const receipts = range
+    ? allReceipts.filter((r) => {
+        const t = new Date(r.receipt_date || r.created_at || 0).getTime();
+        return t >= range.from && t <= range.to;
+      })
+    : allReceipts;
 
-    for (const form of filtered) {
-      const rows = Array.isArray(form.rows) ? form.rows : [];
-      for (const row of rows) {
-        const officeName = String(row.office || '').trim();
-        if (!officeName) continue;
-        const office = nameMap.get(officeName.toLowerCase());
-        if (!office) {
-          throw new Error(`[OfficesService] unknown office: ${officeName}`);
-        }
-        const item = summary.get(String(office.id));
-        item.weight += (Number(row.weight) || 0) + (Number(row.weight2) || 0);
-        item.net += _calcBolsaNet(row);
+  for (const receipt of receipts) {
+    const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
+    for (const row of rows) {
+      if (row?._type === 'separator') continue;
+      const officeName = String(row.office || '').trim();
+      if (!officeName) continue;
+      const office = nameMap.get(officeName.toLowerCase());
+      if (!office) {
+        throw new Error(`[OfficesService] unknown office: ${officeName}`);
       }
-    }
-  } else {
-    const receipts = await DB.findByFields(RECEIPTS_STORE, { username });
-    for (const receipt of receipts) {
-      const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
-      for (const row of rows) {
-        if (row?._type === 'separator') continue;
-        const officeName = String(row.office || '').trim();
-        if (!officeName) continue;
-        const office = nameMap.get(officeName.toLowerCase());
-        if (!office) {
-          throw new Error(`[OfficesService] unknown office: ${officeName}`);
-        }
-        const item = summary.get(String(office.id));
-        item.weight += _calcWeight(row);
-        item.net += _calcReceiptNet(row);
-      }
+      const item = summary.get(String(office.id));
+      item.weight += _calcWeight(row);
+      item.net += _calcReceiptNet(row);
     }
   }
 
