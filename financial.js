@@ -86,6 +86,67 @@ function _calcBolsaTotals(rows, addition = 0) {
   };
 }
 
+function _bolsaCustomerTotals(rows) {
+  const totals = new Map();
+
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || row.office_id == null) continue;
+
+    const officeId = String(row.office_id).trim();
+    if (!officeId) continue;
+
+    const totalPrice = Number(row.total_price);
+    if (!Number.isFinite(totalPrice)) continue;
+
+    const cents = Money.toCents(totalPrice);
+    if (cents === 0) continue;
+
+    const current = totals.get(officeId) || {
+      officeId,
+      officeName: String(row.office || '').trim() || null,
+      cents: 0,
+    };
+    current.cents += cents;
+    if (!current.officeName && row.office) {
+      current.officeName = String(row.office).trim() || null;
+    }
+    totals.set(officeId, current);
+  }
+
+  return [...totals.values()].filter((item) => item.cents !== 0);
+}
+
+function _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, rows) {
+  const appliedAt = new Date().toISOString();
+
+  return _bolsaCustomerTotals(rows).map(({ officeId, officeName, cents }) => ({
+    op: 'add',
+    store: STORE.LEDGER,
+    payload: {
+      username,
+      owner_id: officeId,
+      owner_name: officeName,
+      client_id: officeId,
+      client_type: 'office',
+      client_name: officeName,
+      vehicle_owner_id: null,
+      vehicle_owner_name: null,
+      vehicle_id: null,
+      vehicle_plate: null,
+      type: OFFICE_LEDGER_TYPES.WITHDRAW_AUTO,
+      amount: -cents,
+      entity_type: 'office',
+      entity_id: officeId,
+      reference_type: BOLSA_REF_TYPE,
+      reference_id: String(bolsaId),
+      date: bolsaDate,
+      applied_at: appliedAt,
+      is_reversed: false,
+      note: `خصم إجمالي السعر الكلي من تسجيل البوالص (${String(bolsaId)})`,
+    },
+  }));
+}
+
 // ─── DOMAIN EVENTS (service-owned dispatch) ────────────────────────────────────
 //
 // ARCHITECTURE RULE (Karta System):
@@ -1224,6 +1285,7 @@ async function createBolsaForm(username, data) {
     // Unified integrity check: in-tx so it serializes with concurrent saves.
     await _assertBolsaIntegrity(tx, username, { rows });
     const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
+    const customerLedgerOps = _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, distributedRows);
 
     const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
     const ops = [
@@ -1270,10 +1332,11 @@ async function createBolsaForm(username, data) {
         },
       },
       ...officeHamolaOps,
+      ...customerLedgerOps,
     ];
 
     return tx.runOps(ops);
-  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners', STORE.OFFICES] });
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, STORE.LEDGER, 'vehicleOwners', STORE.OFFICES] });
 
   // FIX #4 — service-owned dispatch, fires only after tx commits.
   _emit('bolsaForms:changed');
@@ -1306,6 +1369,17 @@ async function _reverseBolsaTreasuryOps(bolsaId, username, tx = DB) {
   return entries
     .filter((entry) => entry.reference_type === BOLSA_REF_TYPE && entry.is_reversed === false)
     .map((entry) => ({ op: 'update', store: STORE.TREASURY, id: entry.id, patch: reversePatch }));
+}
+
+async function _reverseBolsaCustomerLedgerOps(bolsaId, username, tx = DB) {
+  const entries = await tx.getByIndex(STORE.LEDGER, 'by_reference_id', String(bolsaId));
+  const now = new Date().toISOString();
+  const reversePatch = { is_reversed: true, reversed_at: now, reversed_by: username };
+  return entries
+    .filter((entry) => entry.reference_type === BOLSA_REF_TYPE
+      && entry.type === OFFICE_LEDGER_TYPES.WITHDRAW_AUTO
+      && entry.is_reversed === false)
+    .map((entry) => ({ op: 'update', store: STORE.LEDGER, id: entry.id, patch: reversePatch }));
 }
 
 async function updateBolsaForm(username, id, data) {
@@ -1350,6 +1424,7 @@ async function updateBolsaForm(username, id, data) {
     // UPDATE enforces the same integrity rules as CREATE, inside the tx.
     await _assertBolsaIntegrity(tx, username, { rows });
     const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
+    const customerLedgerOps = _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, distributedRows);
 
     const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
     const oldAgentKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
@@ -1371,6 +1446,7 @@ async function updateBolsaForm(username, id, data) {
     }
 
     const reverseOps = await _reverseBolsaTreasuryOps(bolsaId, username, tx);
+    const reverseCustomerLedgerOps = await _reverseBolsaCustomerLedgerOps(bolsaId, username, tx);
 
     const sameAgent = String(oldAgent.id) === String(newAgent.id);
     const balanceOps = sameAgent
@@ -1403,6 +1479,7 @@ async function updateBolsaForm(username, id, data) {
 
     const ops = [
       ...reverseOps,
+      ...reverseCustomerLedgerOps,
       ...balanceOps,
       {
         op: 'update',
@@ -1440,10 +1517,11 @@ async function updateBolsaForm(username, id, data) {
         },
       },
       ...officeHamolaOps,
+      ...customerLedgerOps,
     ];
 
     return tx.runOps(ops);
-  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners', STORE.OFFICES] });
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, STORE.LEDGER, 'vehicleOwners', STORE.OFFICES] });
 
   const [saved] = results;
 
@@ -1475,10 +1553,12 @@ async function deleteBolsaForm(username, id) {
     }
 
     const reverseOps = await _reverseBolsaTreasuryOps(String(id), username, tx);
+    const reverseCustomerLedgerOps = await _reverseBolsaCustomerLedgerOps(String(id), username, tx);
     const restoredBalance = Money.round((Number(agent.balance) || 0) + grandTotal);
 
     const ops = [
       ...reverseOps,
+      ...reverseCustomerLedgerOps,
       {
         op: 'update',
         store: 'agents',
@@ -1493,7 +1573,7 @@ async function deleteBolsaForm(username, id) {
     ];
 
     return tx.runOps(ops);
-  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY] });
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, STORE.LEDGER] });
 
   // FIX #4 — service-owned dispatch; fixes stale balances on entities/
   // accounts pages after delete from allReceipts.
