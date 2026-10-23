@@ -160,6 +160,7 @@ function _normalizeBolsaRow(r) {
   };
   const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
   return {
+    kartaNo:    str(r?.kartaNo),
     rowdate:    str(r?.rowdate),
     driver:     str(r?.driver),
     owner_name: str(r?.owner_name),

@@ -267,7 +267,7 @@ const DB = (() => {
      *   username    : FK → users.username
      *   bolsa_date  : ISO date
      *   agent_id    : FK → agents.id (mandoub)
-     *   rows        : Array<{ rowdate, driver, owner_name, carNo, weight,
+     *   rows        : Array<{ kartaNo, rowdate, driver, owner_name, carNo, weight,
      *                         weight2, office, loading, direction, type,
      *                         ohda, noloon }>
      *   totals      : { ohda, addition, grand_total } (decimals)

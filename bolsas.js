@@ -150,13 +150,14 @@ const BolsaModule = Object.freeze({
 
 
 const COLS = [
-  'التاريخ', 'اسم السائق', 'صاحب المركبة', 'رقم المركبة',
+  'رقم الكارتة', 'التاريخ', 'اسم السائق', 'صاحب المركبة', 'رقم المركبة',
   'وزن وش', 'اسم الشركة', 'التحميل', 'الجهة', 'النوع',
   'العهدة', 'نولون', 'إجراءات',
 ];
 
 const BOLSA_ARROW_ROW_ID = 'bolsaFillArrowRow';
 const BOLSA_FILL_COLS = [
+  'bolsa-karta',
   'bolsa-rowdate',
   'bolsa-driver',
   'bolsa-owner',
@@ -174,6 +175,7 @@ const BOLSA_FILL_COLS = [
 let _editingBolsaFormId = null;
 
 const BOLSA_ENTER_NAV_ORDER = [
+  'bolsa-karta',
   'bolsa-rowdate',
   'bolsa-driver',
   'bolsa-owner',
@@ -472,20 +474,21 @@ function _render() {
       <div style="overflow-x:auto; overflow-y:auto; max-height:65vh; width:100%;">
         <table class="text-xs" id="bolsaTable"
           style="table-layout:auto; width:100%; border-collapse:collapse;">
-          <thead style="background: linear-gradient(to right, #0f766e, #0d9488); position:sticky; top:0; z-index:10;" class="text-white">
+          <thead style="background: linear-gradient(to right, #1e3a8a, #1d4ed8); position:sticky; top:0; z-index:10; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);" class="text-white">
             <tr>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:55px;font-size:10px;">التاريخ</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:70px;font-size:10px;">اسم السائق</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">صاحب المركبة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">رقم المركبة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:50px;font-size:10px;">وزن وش</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">اسم الشركة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">التحميل</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:80px;font-size:10px;">الجهة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">النوع</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">العهدة</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:45px;font-size:10px;">نولون</th>
-              <th class="px-1 py-1 text-center whitespace-nowrap" style="min-width:30px;font-size:10px;">حذف</th>
+              <th class="text-center whitespace-nowrap" style="min-width:60px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">رقم الكارتة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:55px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">التاريخ</th>
+              <th class="text-center whitespace-nowrap" style="min-width:70px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم السائق</th>
+              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">صاحب المركبة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">رقم المركبة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:50px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">وزن وش</th>
+              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم الشركة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">التحميل</th>
+              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">الجهة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">النوع</th>
+              <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">العهدة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">نولون</th>
+              <th class="text-center whitespace-nowrap" style="min-width:30px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">حذف</th>
             </tr>
           </thead>
           <tbody id="bolsaTableBody"></tbody>
@@ -555,6 +558,9 @@ function _rowTemplate() {
     `<div class="row-msg row-msg-${key} field-msg-inline field-msg-inline--error" role="alert"></div>`;
 
   return `
+    <td class="px-1 py-1" style="min-width:60px;">
+      ${inp('bolsa-karta', 'type="text"')}
+    </td>
     <td class="px-1 py-1" style="min-width:55px;">
       ${inp('bolsa-rowdate', 'type="text" placeholder="يوم/شهر"')}
     </td>
@@ -623,6 +629,7 @@ function _collectRow(tr) {
   const weight2  = Number.isFinite(legacyW2) ? legacyW2 : 0;
 
   return {
+    kartaNo: String(v('bolsa-karta')).trim(),
     rowdate: String(v('bolsa-rowdate')).trim(),
     driver: String(v('bolsa-driver')).trim(),
     owner_name: String(v('bolsa-owner')).trim(),
@@ -1031,6 +1038,7 @@ function _hydrateBolsaRows(rows) {
       const el = tr.querySelector('.' + cls);
       if (el) el.value = value ?? '';
     };
+    set('bolsa-karta', rowData.kartaNo);
     set('bolsa-rowdate', rowData.rowdate);
     set('bolsa-driver', rowData.driver);
     set('bolsa-owner', rowData.owner_name);
