@@ -160,6 +160,7 @@ function _normalizeBolsaRow(r) {
   };
   const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
   return {
+    _rowId:     str(r?._rowId),
     kartaNo:    str(r?.kartaNo),
     rowdate:    str(r?.rowdate),
     driver:     str(r?.driver),
@@ -168,12 +169,43 @@ function _normalizeBolsaRow(r) {
     weight:     num(r?.weight),
     weight2:    num(r?.weight2),
     office:     str(r?.office),
+    office_id:  null,
     loading:    str(r?.loading),
     direction:  str(r?.direction),
     type:       str(r?.type),
     ohda:       num(r?.ohda),
     noloon:     num(r?.noloon),
   };
+}
+
+function _withStableBolsaRowIds(rows) {
+  const seen = new Set();
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    let rowId = String(row?._rowId || '').trim();
+    if (!rowId || seen.has(rowId)) rowId = _uuid();
+    seen.add(rowId);
+    return rowId === row._rowId ? row : { ...row, _rowId: rowId };
+  });
+}
+
+async function _resolveBolsaRowCompanies(tx, username, rows) {
+  const offices = await tx.findByFields(STORE.OFFICES, { username });
+  const officeByName = new Map();
+
+  for (const office of offices) {
+    const key = _toKey(office?.name);
+    if (key && office?.id != null && !officeByName.has(key)) {
+      officeByName.set(key, office);
+    }
+  }
+
+  return rows.map((row) => {
+    const office = officeByName.get(_toKey(row.office));
+    return {
+      ...row,
+      office_id: office ? String(office.id) : null,
+    };
+  });
 }
 
 function _requireText(value, label) {
@@ -1071,7 +1103,7 @@ async function createBolsaForm(username, data) {
 
   // Normalize rows once, server-side, so the stored shape is the canonical
   // shape regardless of which caller built the payload.
-  const rows = rawRows.map(_normalizeBolsaRow);
+  const rows = _withStableBolsaRowIds(rawRows.map(_normalizeBolsaRow));
 
   // Server-side total calculation is the source of truth.  Caller-supplied
   // totals are ignored — the only authoritative value is what we compute
@@ -1102,6 +1134,7 @@ async function createBolsaForm(username, data) {
 
     // Unified integrity check: in-tx so it serializes with concurrent saves.
     await _assertBolsaIntegrity(tx, username, { rows });
+    const distributedRows = await _resolveBolsaRowCompanies(tx, username, rows);
 
     const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
     const ops = [
@@ -1113,7 +1146,7 @@ async function createBolsaForm(username, data) {
           username,
           bolsa_date: bolsaDate,
           agent_id: agentId,
-          rows,
+          rows: distributedRows,
           totals: {
             ohda: totals.ohda,
             addition: totals.addition, // FIX #1 — persist addition
@@ -1150,7 +1183,7 @@ async function createBolsaForm(username, data) {
     ];
 
     return tx.runOps(ops);
-  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners'] });
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners', STORE.OFFICES] });
 
   // FIX #4 — service-owned dispatch, fires only after tx commits.
   _emit('bolsaForms:changed');
@@ -1204,7 +1237,7 @@ async function updateBolsaForm(username, id, data) {
   if (rawRows.length === 0) throw new Error('[FinancialService:updateBolsaForm] rows must be a non-empty array.');
 
   // Same normalization + total pipeline as CREATE (FIX #2).
-  const rows = rawRows.map(_normalizeBolsaRow);
+  const rows = _withStableBolsaRowIds(rawRows.map(_normalizeBolsaRow));
 
   // FIX #1 — `addition` is now the canonical input.  Caller-supplied
   // totals.grand_total is no longer trusted (it was a dormant override
@@ -1226,6 +1259,7 @@ async function updateBolsaForm(username, id, data) {
 
     // UPDATE enforces the same integrity rules as CREATE, inside the tx.
     await _assertBolsaIntegrity(tx, username, { rows });
+    const distributedRows = await _resolveBolsaRowCompanies(tx, username, rows);
 
     const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
     const oldAgentKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
@@ -1287,7 +1321,7 @@ async function updateBolsaForm(username, id, data) {
         patch: {
           bolsa_date: bolsaDate,
           agent_id: agentId,
-          rows,
+          rows: distributedRows,
           totals: {
             ohda: totals.ohda,
             addition: totals.addition, // FIX #1 — persist addition
@@ -1318,7 +1352,7 @@ async function updateBolsaForm(username, id, data) {
     ];
 
     return tx.runOps(ops);
-  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners'] });
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners', STORE.OFFICES] });
 
   const [saved] = results;
 

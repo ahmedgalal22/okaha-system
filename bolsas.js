@@ -629,6 +629,7 @@ function _collectRow(tr) {
   const weight2  = Number.isFinite(legacyW2) ? legacyW2 : 0;
 
   return {
+    _rowId: String(tr.dataset.rowId || '').trim(),
     kartaNo: String(v('bolsa-karta')).trim(),
     rowdate: String(v('bolsa-rowdate')).trim(),
     driver: String(v('bolsa-driver')).trim(),
@@ -1034,6 +1035,7 @@ function _hydrateBolsaRows(rows) {
     _addRow();
     const tr = _bolsaDataRows().at(-1);
     if (!tr) continue;
+    if (rowData._rowId) tr.dataset.rowId = String(rowData._rowId);
     const set = (cls, value) => {
       const el = tr.querySelector('.' + cls);
       if (el) el.value = value ?? '';

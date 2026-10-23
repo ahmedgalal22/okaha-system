@@ -267,9 +267,9 @@ const DB = (() => {
      *   username    : FK → users.username
      *   bolsa_date  : ISO date
      *   agent_id    : FK → agents.id (mandoub)
-     *   rows        : Array<{ kartaNo, rowdate, driver, owner_name, carNo, weight,
-     *                         weight2, office, loading, direction, type,
-     *                         ohda, noloon }>
+     *   rows        : Array<{ _rowId, kartaNo, rowdate, driver, owner_name, carNo,
+     *                         weight, weight2, office, office_id, loading,
+     *                         direction, type, ohda, noloon }>
      *   totals      : { ohda, addition, grand_total } (decimals)
      */
     bolsaForms: {

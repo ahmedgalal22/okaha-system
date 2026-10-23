@@ -1214,7 +1214,90 @@ async function _getOfficeCards(office) {
   return cards;
 }
 
-function _renderOfficeCards(cards) {
+async function _getOfficeBolsaCards(office) {
+  const username = _moduleSessionUsername();
+  const officeId = String(office.id);
+  const officeName = String(office.name || '').trim().toLowerCase();
+  const forms = await DB.findByFields(BOLSA_STORE, { username });
+
+  forms.sort((a, b) => {
+    const byBolsaDate = new Date(b.bolsa_date || 0).getTime() - new Date(a.bolsa_date || 0).getTime();
+    if (byBolsaDate !== 0) return byBolsaDate;
+    return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+  });
+
+  const cards = [];
+  for (const form of forms) {
+    if (form.deleted_at !== null) continue;
+    const rows = Array.isArray(form.rows) ? form.rows : [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row) continue;
+
+      const hasOfficeId = Object.prototype.hasOwnProperty.call(row, 'office_id');
+      const matchesOffice = hasOfficeId
+        ? row.office_id != null && String(row.office_id) === officeId
+        : String(row.office || '').trim().toLowerCase() === officeName;
+      if (!matchesOffice) continue;
+
+      cards.push({
+        source: 'bolsa',
+        bolsa_form_id: String(form.id),
+        source_row_id: row._rowId ? String(row._rowId) : `${form.id}:${i}`,
+        row_index: i,
+        date: row.rowdate || '',
+        driver: row.driver || '',
+        car: row.carNo || '',
+        weight: Number(row.weight) || 0,
+        loading: row.loading || '',
+        taktik: row.direction || '',
+        type: row.type || '',
+      });
+    }
+  }
+
+  return cards;
+}
+
+function _renderOfficeBolsaCards(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return '';
+
+  const tableRows = cards.map((c) => `
+    <tr data-source="bolsa" data-bolsa-form-id="${_text(c.bolsa_form_id)}" data-source-row-id="${_text(c.source_row_id)}">
+      <td>${_text(c.date)}</td>
+      <td>${_text(c.driver)}</td>
+      <td>${_text(c.car)}</td>
+      <td>${_fmt(c.weight)}</td>
+      <td>${_text(c.loading)}</td>
+      <td>${_text(c.taktik)}</td>
+      <td>${_text(c.type)}</td>
+    </tr>
+  `).join('');
+
+  return `
+    <section class="office-bolsa-cards" style="margin-top:20px;">
+      <h3 style="font-size:1rem;font-weight:800;color:#1f2937;margin:0 0 10px;">كارتات البوالص</h3>
+      <div class="table-wrapper" style="max-height:60vh;overflow-y:auto;">
+        <table class="table office-bolsa-cards-table">
+          <thead style="background:linear-gradient(135deg,#1e3a8a,#2563eb);">
+            <tr>
+              <th style="color:#fff;">التاريخ</th>
+              <th style="color:#fff;">اسم السائق</th>
+              <th style="color:#fff;">رقم المركبة</th>
+              <th style="color:#fff;">وزن وش</th>
+              <th style="color:#fff;">التحميل</th>
+              <th style="color:#fff;">الجهة</th>
+              <th style="color:#fff;">النوع</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
+function _renderOfficeCards(cards, bolsaCards = []) {
   const totalWeight = cards.reduce((s, c) => s + c.weight, 0);
   const totalNoloon = cards.reduce((s, c) => s + c.noloon, 0);
 
@@ -1234,8 +1317,10 @@ function _renderOfficeCards(cards) {
       </div>
     </div>`;
 
+  const bolsaHTML = _renderOfficeBolsaCards(bolsaCards);
+
   if (cards.length === 0) {
-    return summaryHTML + '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذه الشركة</div>';
+    return summaryHTML + (bolsaHTML || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذه الشركة</div>');
   }
 
   const statusLabel = (s) => s === 'paid' ? '<span style="color:#16a34a;font-weight:700;">تم صرفه</span>' : '<span style="color:#dc2626;font-weight:700;">لم يتم صرفه</span>';
@@ -1280,7 +1365,7 @@ function _renderOfficeCards(cards) {
         </thead>
         <tbody>${tableRows}</tbody>
       </table>
-    </div>`;
+    </div>` + bolsaHTML;
 }
 
 async function _renderDetailsContent(office) {
@@ -1302,7 +1387,8 @@ async function _renderDetailsContent(office) {
   if (_activeDetailsTab === 'cards') {
     content.innerHTML = '<div style="text-align:center;padding:24px;color:#9ca3af;">جاري التحميل...</div>';
     const cardsData = await _getOfficeCards(office);
-    content.innerHTML = _renderOfficeCards(cardsData);
+    const bolsaCardsData = await _getOfficeBolsaCards(office);
+    content.innerHTML = _renderOfficeCards(cardsData, bolsaCardsData);
   }
 }
 
@@ -1647,6 +1733,14 @@ function attachOfficesPageListeners() {
 
   window.addEventListener('offices:changed', () => {
     loadOffices();
+  });
+
+  window.addEventListener('bolsaForms:changed', async () => {
+    if (_activeDetailsTab !== 'cards' || !_detailsOfficeId) return;
+    try {
+      const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
+      if (office) await _renderDetailsContent(office);
+    } catch (_) {}
   });
 }
 
