@@ -69,6 +69,7 @@ export function calculateTreasuryTotals(entries) {
   let total_salfa = 0;
   let total_expense = 0;
   let total_mandoub = 0;
+  let total_bolsa = 0;
 
   for (const e of (entries || [])) {
     if (!e) continue;
@@ -80,6 +81,7 @@ export function calculateTreasuryTotals(entries) {
     if (e.effect === 'salfa') total_salfa += amt;
     if (e.effect === 'expense' || e.effect === 'salary') total_expense += amt;
     if (e.effect === 'mandoub_cash_out') total_mandoub += amt;
+    if (e.effect === 'bolsa_deduction') total_bolsa += amt;
   }
 
   return {
@@ -88,5 +90,6 @@ export function calculateTreasuryTotals(entries) {
     total_salfa: Money.toDecimal(total_salfa),
     total_expense: Money.toDecimal(total_expense),
     total_mandoub: Money.toDecimal(total_mandoub),
+    total_bolsa: Money.toDecimal(total_bolsa),
   };
 }

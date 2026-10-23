@@ -79,11 +79,17 @@ async function getMandoubById(agent_id, username = null) {
 async function _mandoubLedger(agent_id) {
   // Reuse treasury as the ledger store (no new stores allowed).
   const key = String(agent_id);
-  const entries = await DB.findByFields('treasury', {
+  const bolsaEntries = await DB.findByFields('treasury', {
+    is_reversed: false,
+    reference_type: 'bolsa',
+    agent_id: key,
+  });
+  const balanceEntries = await DB.findByFields('treasury', {
     is_reversed: false,
     reference_type: 'mandoub_balance',
     agent_id: key,
   });
+  const entries = [...bolsaEntries, ...balanceEntries];
   return entries
     .slice()
     .sort((a, b) => new Date(b.date || b.applied_at || b.created_at || 0) - new Date(a.date || a.applied_at || a.created_at || 0));
@@ -108,6 +114,54 @@ async function getMandoubSnapshot(agent_id) {
     total_deposit: Money.round(total_deposit),
     ledger,
   };
+}
+
+async function deductFromAgent(username, agent_id, amount, bolsa_id, date = null) {
+  if (!username) throw new Error('[AgentsService:deductFromAgent] username is required.');
+
+  const amt = Money.round(amount);
+  if (amt <= 0) throw new Error('❌ قيمة الخصم يجب أن تكون أكبر من صفر');
+
+  const isoDate = (date && !Number.isNaN(Date.parse(date))) ? date : _todayISO();
+  const cents = Money.toCents(amt);
+
+  return DB.transaction(async (tx) => {
+    const key = Number.isNaN(Number(agent_id)) ? agent_id : Number(agent_id);
+    const agent = await tx.getById('agents', key);
+    if (!agent || agent.deleted_at !== null || agent.agent_kind !== 'mandoub' || !_isAgentOwnedBy(agent, username)) {
+      throw new Error('❌ يجب اختيار مندوب صحيح');
+    }
+
+    const newBal = Money.round((Number(agent.balance) || 0) - amt);
+
+    const ops = [
+      { op: 'update', store: 'agents', id: agent.id, patch: { balance: newBal } },
+      {
+        op: 'add',
+        store: 'treasury',
+        payload: {
+          username,
+          type: 'withdraw',
+          effect: 'bolsa_deduction',
+          amount: cents,
+          account_type: 'cash',
+          reference_type: 'bolsa',
+          reference_id: bolsa_id,
+          agent_id: String(agent.id),
+          client_id: String(agent.id),
+          client_type: 'mandoub',
+          client_name: agent.name || null,
+          date: isoDate,
+          applied_at: new Date().toISOString(),
+          is_reversed: false,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsa_id)})`,
+        },
+      },
+    ];
+
+    const [updatedAgent, ledgerEntry] = await tx.runOps(ops);
+    return { agent: updatedAgent, ledger: ledgerEntry };
+  }, { username, stores: ['agents', 'treasury'] });
 }
 
 /**
@@ -192,6 +246,7 @@ const AgentsService = Object.freeze({
   getAllMandoubs,
   getMandoubById,
   getMandoubSnapshot,
+  deductFromAgent,
   adjustMandoubBalance,
 });
 

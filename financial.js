@@ -33,6 +33,7 @@ const STORE = Object.freeze({
 });
 
 const REF_TYPE      = 'receipt';
+const BOLSA_REF_TYPE = 'bolsa';
 const ACCOUNT_TYPES = Object.freeze(['cash', 'bank', 'vodafone', 'none']);
 const OFFICE_LEDGER_TYPES = Object.freeze({
   DEPOSIT       : 'OFFICE_DEPOSIT',
@@ -68,6 +69,110 @@ function _normalizePayoutStatus(value) {
 
 function _toKey(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function _calcBolsaTotals(rows, addition = 0) {
+  const list = Array.isArray(rows) ? rows : [];
+  let ohda = 0;
+  for (const r of list) {
+    ohda += Number(r?.ohda) || 0;
+  }
+  const add = Money.round(Number(addition) || 0);
+  const grand_total = Money.round(ohda + add);
+  return {
+    ohda: Money.round(ohda),
+    addition: add,
+    grand_total,
+  };
+}
+
+// ─── DOMAIN EVENTS (service-owned dispatch) ────────────────────────────────────
+//
+// ARCHITECTURE RULE (Karta System):
+//   FinancialService is the SOLE owner of domain events for bolsaForms,
+//   agents, and treasury.  No caller may dispatch these events directly.
+//
+//   _emit():
+//     - private/internal only
+//     - never throws (must not break the save flow if a listener errors)
+//     - called ONLY after a DB transaction has fully committed
+//
+//   This keeps event ownership in one place and makes the MySQL/HTTP
+//   migration a single-line swap (replace window.dispatchEvent with a
+//   server-side event bus / SSE / webhook).
+//
+function _emit(eventName) {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') return;
+  try {
+    window.dispatchEvent(new CustomEvent(eventName));
+  } catch (_) {
+    // Listener errors must never break a successful save.
+  }
+}
+
+// ─── BOLSA INTEGRITY (shared by CREATE and UPDATE) ─────────────────────────────
+//
+// One pipeline for validation + normalization, used by both create and
+// update paths so the integrity rules can never diverge.
+//
+// MIGRATION-FRIENDLY SHAPE:
+//   The function is pure (no side effects), takes the transaction handle,
+//   and returns nothing on success / throws on failure.  When migrating,
+//   this becomes the place to add a SQL SELECT … FOR UPDATE if needed.
+//
+
+async function _assertBolsaIntegrity(tx, username, payload, opts) {
+  const { rows } = payload;
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) {
+    throw new Error('❌ يجب إضافة صف واحد على الأقل');
+  }
+
+  // Step 1 — per-row required fields.
+  for (const r of list) {
+    const ownerName = String(r?.owner_name ?? '').trim();
+    if (!ownerName) throw new Error('❌ اسم صاحب المركبة مطلوب');
+  }
+
+  // Step 2 — owner whitelist (must exist + not soft-deleted), scoped to the
+  // current tenant via the by_username index.  After a SQL migration this
+  // becomes the natural FK scope.
+  const allOwners = await tx.getByIndex('vehicleOwners', 'by_username', username);
+  const ownerNames = new Set(
+    allOwners
+      .filter(o => String(o?.name || '').trim())
+      .map(o => String(o.name).trim())
+  );
+  for (const r of list) {
+    const ownerName = String(r.owner_name).trim();
+    if (!ownerNames.has(ownerName)) {
+      throw new Error(`❌ اسم صاحب المركبة غير موجود في قاعدة البيانات: ${ownerName}`);
+    }
+  }
+}
+
+// Normalize one row into the persisted shape.  Used by both create and
+// update so the stored shape never drifts.  Pure function.
+function _normalizeBolsaRow(r) {
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
+  return {
+    rowdate:    str(r?.rowdate),
+    driver:     str(r?.driver),
+    owner_name: str(r?.owner_name),
+    carNo:      str(r?.carNo),
+    weight:     num(r?.weight),
+    weight2:    num(r?.weight2),
+    office:     str(r?.office),
+    loading:    str(r?.loading),
+    direction:  str(r?.direction),
+    type:       str(r?.type),
+    ohda:       num(r?.ohda),
+    noloon:     num(r?.noloon),
+  };
 }
 
 function _requireText(value, label) {
@@ -349,7 +454,7 @@ function _parseApplyResults(applyResults) {
 
 // ─── PUBLIC: createReceipt ─────────────────────────────────────────────────────
 
-async function createReceipt(username, data) {
+async function createReceipt(username, data, extraOps = []) {
   if (!username) throw new Error('[FinancialService:create] username is required.');
 
   const receiptId = data.id || _uuid();
@@ -386,7 +491,7 @@ async function createReceipt(username, data) {
   };
 
   const applyOps = _buildApplyOps(username, clean, receiptId);
-  const allOps = [receiptOp, ...applyOps];
+  const allOps = [receiptOp, ...applyOps, ...extraOps];
   const allResults = await DB.transaction(async (tx) => {
     await _assertNotApplied(receiptId, tx);
     return tx.runOps(allOps);
@@ -407,7 +512,7 @@ async function createReceipt(username, data) {
 
 // ─── PUBLIC: updateReceipt ─────────────────────────────────────────────────────
 
-async function updateReceipt(username, id, data) {
+async function updateReceipt(username, id, data, extraOps = []) {
   if (!username) throw new Error('[FinancialService:update] username is required.');
   if (!id)       throw new Error('[FinancialService:update] id is required.');
 
@@ -442,7 +547,9 @@ async function updateReceipt(username, id, data) {
   };
 
   const applyOps = _buildApplyOps(username, clean, id);
-  const allTxOps = [updateOp, ...applyOps];
+  // extraOps lets the caller attach additional atomic ops to the same
+  // DB transaction as the receipt update.
+  const allTxOps = [updateOp, ...applyOps, ...extraOps];
   const txResult = await DB.transaction(async (tx) => {
     const existing = await tx.getById(STORE.RECEIPTS, id);
     if (!existing) {
@@ -471,10 +578,13 @@ async function updateReceipt(username, id, data) {
 
 // ─── PUBLIC: deleteReceipt ─────────────────────────────────────────────────────
 
-async function deleteReceipt(username, id) {
+async function deleteReceipt(username, id, extraOps = []) {
   if (!username) throw new Error('[FinancialService:delete] username is required.');
   if (!id)       throw new Error('[FinancialService:delete] id is required.');
 
+  // extraOps are inserted BEFORE the receipt delete op so the soft-deleted
+  // receipt remains the last op, preserving the result-shape contract
+  // (caller still reads the deleted receipt from the final result index).
   const txResult = await DB.transaction(async (tx) => {
     const existing = await tx.getById(STORE.RECEIPTS, id);
     if (!existing) {
@@ -495,17 +605,17 @@ async function deleteReceipt(username, id) {
       }
     };
 
-    // Ops order: reverse-financial → soft-delete-receipt.
+    // Ops order: reverse-financial → extra-bolsa-unlink → soft-delete-receipt.
     // The receipt result is always the LAST element, so the caller's
     // existing `allResults[length - 1]` lookup remains correct.
-    const allTxOps = [...reverseOps, deleteOp];
+    const allTxOps = [...reverseOps, ...extraOps, deleteOp];
     const results = await tx.runOps(allTxOps);
     return {
       results,
       treasury_count: reverseOps.filter(o => o.store === STORE.TREASURY).length,
       ledger_count: reverseOps.filter(o => o.store === STORE.LEDGER).length,
     };
-  }, { username, stores: [STORE.RECEIPTS, STORE.TREASURY, STORE.LEDGER] });
+  }, { username, stores: _storesForOps(extraOps, [STORE.RECEIPTS, STORE.TREASURY, STORE.LEDGER]) });
 
   const allResults = txResult.results;
   const receipt = Money.decimalizeRecord(allResults[allResults.length - 1]);
@@ -938,6 +1048,335 @@ async function createOfficeDeposit(username, data) {
   return Money.decimalizeRecord(entry);
 }
 
+// ─── BOLSA OPERATIONS ──────────────────────────────────────────────────────────
+
+async function createBolsaForm(username, data) {
+  if (!username) throw new Error('[FinancialService:createBolsaForm] username is required.');
+  if (!data || typeof data !== 'object') {
+    throw new Error('[FinancialService:createBolsaForm] data must be a plain object.');
+  }
+
+  const bolsaId = String(data.id || '').trim();
+  const agentId = String(data.agent_id || '').trim();
+  const bolsaDate = data.bolsa_date;
+  const rawRows = Array.isArray(data.rows) ? data.rows : [];
+
+  if (!bolsaId) throw new Error('[FinancialService:createBolsaForm] id is required.');
+  if (!agentId) throw new Error('[FinancialService:createBolsaForm] agent_id is required.');
+  if (!bolsaDate || isNaN(Date.parse(bolsaDate))) {
+    throw new Error('[FinancialService:createBolsaForm] bolsa_date must be a valid ISO date string.');
+  }
+  if (rawRows.length === 0) throw new Error('[FinancialService:createBolsaForm] rows must be a non-empty array.');
+
+  // Normalize rows once, server-side, so the stored shape is the canonical
+  // shape regardless of which caller built the payload.
+  const rows = rawRows.map(_normalizeBolsaRow);
+
+  // Server-side total calculation is the source of truth.  Caller-supplied
+  // totals are ignored — the only authoritative value is what we compute
+  // here from the normalized rows + the addition input.
+  //
+  // `data.addition` is the canonical input field; `data.totals?.addition`
+  // is accepted only as a fallback for callers that still pre-build a
+  // totals object (forward compatibility).
+  const additionInput = data.addition != null
+    ? data.addition
+    : (data.totals && data.totals.addition);
+  const totals = _calcBolsaTotals(rows, additionInput);
+  const grandTotal = totals.grand_total;
+  const cents = Money.toCents(grandTotal);
+
+  const [saved] = await DB.transaction(async (tx) => {
+    const agentKey = Number.isNaN(Number(agentId)) ? agentId : Number(agentId);
+    const agent = await tx.getById('agents', agentKey);
+    if (!agent || agent.deleted_at !== null || agent.agent_kind !== 'mandoub') {
+      throw new Error('❌ المندوب غير موجود');
+    }
+    const agentOwner = typeof agent.username === 'string' && agent.username.trim()
+      ? agent.username.trim()
+      : (typeof agent.created_by === 'string' && agent.created_by.trim() ? agent.created_by.trim() : null);
+    if (agentOwner && agentOwner !== String(username)) {
+      throw new Error('❌ المندوب غير موجود');
+    }
+
+    // Unified integrity check: in-tx so it serializes with concurrent saves.
+    await _assertBolsaIntegrity(tx, username, { rows });
+
+    const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
+    const ops = [
+      {
+        type: 'add',
+        store: 'bolsaForms',
+        payload: {
+          id: bolsaId,
+          username,
+          bolsa_date: bolsaDate,
+          agent_id: agentId,
+          rows,
+          totals: {
+            ohda: totals.ohda,
+            addition: totals.addition, // FIX #1 — persist addition
+            grand_total: grandTotal,
+          },
+        },
+      },
+      {
+        type: 'update',
+        store: 'agents',
+        id: agent.id,
+        patch: { balance: newBalance },
+      },
+      {
+        type: 'add',
+        store: 'treasury',
+        payload: {
+          type: 'withdraw',
+          effect: 'bolsa_deduction',
+          amount: cents,
+          account_type: 'cash',
+          reference_type: 'bolsa',
+          reference_id: bolsaId,
+          agent_id: String(agent.id),
+          client_id: String(agent.id),
+          client_type: 'mandoub',
+          client_name: agent.name || null,
+          date: bolsaDate,
+          applied_at: new Date().toISOString(),
+          is_reversed: false,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
+        },
+      },
+    ];
+
+    return tx.runOps(ops);
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners'] });
+
+  // FIX #4 — service-owned dispatch, fires only after tx commits.
+  _emit('bolsaForms:changed');
+  _emit('agents:changed');
+
+  return saved;
+}
+
+async function getBolsaForms(username) {
+  if (!username) throw new Error('[FinancialService:getBolsaForms] username is required.');
+  const forms = await DB.getByIndex('bolsaForms', 'by_username', username);
+  return forms.map(Money.decimalizeRecord);
+}
+
+async function getBolsaForm(username, id) {
+  if (!username) throw new Error('[FinancialService:getBolsaForm] username is required.');
+  if (!id) throw new Error('[FinancialService:getBolsaForm] id is required.');
+  const form = await DB.getById('bolsaForms', String(id));
+  if (!form) return null;
+  if (form.username !== username) {
+    throw new Error('[FinancialService:getBolsaForm] cross-user access is forbidden.');
+  }
+  return Money.decimalizeRecord(form);
+}
+
+async function _reverseBolsaTreasuryOps(bolsaId, username, tx = DB) {
+  const entries = await tx.getByIndex(STORE.TREASURY, 'by_reference_id', bolsaId);
+  const now = new Date().toISOString();
+  const reversePatch = { is_reversed: true, reversed_at: now, reversed_by: username };
+  return entries
+    .filter((entry) => entry.reference_type === BOLSA_REF_TYPE && entry.is_reversed === false)
+    .map((entry) => ({ op: 'update', store: STORE.TREASURY, id: entry.id, patch: reversePatch }));
+}
+
+async function updateBolsaForm(username, id, data) {
+  if (!username) throw new Error('[FinancialService:updateBolsaForm] username is required.');
+  if (!id) throw new Error('[FinancialService:updateBolsaForm] id is required.');
+  if (!data || typeof data !== 'object') {
+    throw new Error('[FinancialService:updateBolsaForm] data must be a plain object.');
+  }
+
+  const bolsaId = String(id).trim();
+  const bolsaDate = data.bolsa_date;
+  const agentId = String(data.agent_id || '').trim();
+  const rawRows = Array.isArray(data.rows) ? data.rows : [];
+
+  if (!agentId) throw new Error('[FinancialService:updateBolsaForm] agent_id is required.');
+  if (!bolsaDate || isNaN(Date.parse(bolsaDate))) {
+    throw new Error('[FinancialService:updateBolsaForm] bolsa_date must be a valid ISO date string.');
+  }
+  if (rawRows.length === 0) throw new Error('[FinancialService:updateBolsaForm] rows must be a non-empty array.');
+
+  // Same normalization + total pipeline as CREATE (FIX #2).
+  const rows = rawRows.map(_normalizeBolsaRow);
+
+  // FIX #1 — `addition` is now the canonical input.  Caller-supplied
+  // totals.grand_total is no longer trusted (it was a dormant override
+  // path with no real use case in the codebase).
+  const additionInput = data.addition != null
+    ? data.addition
+    : (data.totals && data.totals.addition);
+  const totals = _calcBolsaTotals(rows, additionInput);
+  const nextGrandTotal = totals.grand_total;
+
+  const results = await DB.transaction(async (tx) => {
+    const existing = await tx.getById('bolsaForms', String(id));
+    if (!existing) {
+      throw new Error(`[FinancialService:updateBolsaForm] Bolsa ${id} not found.`);
+    }
+    if (existing.username !== username) {
+      throw new Error('[FinancialService:updateBolsaForm] cross-user access is forbidden.');
+    }
+
+    // UPDATE enforces the same integrity rules as CREATE, inside the tx.
+    await _assertBolsaIntegrity(tx, username, { rows });
+
+    const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
+    const oldAgentKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
+    const oldAgent = await tx.getById('agents', oldAgentKey);
+    if (!oldAgent) {
+      throw new Error('[FinancialService:updateBolsaForm] original agent not found.');
+    }
+
+    const newAgentKey = Number.isNaN(Number(agentId)) ? agentId : Number(agentId);
+    const newAgent = await tx.getById('agents', newAgentKey);
+    if (!newAgent || newAgent.deleted_at !== null || newAgent.agent_kind !== 'mandoub') {
+      throw new Error('❌ المندوب غير موجود');
+    }
+    const newAgentOwner = typeof newAgent.username === 'string' && newAgent.username.trim()
+      ? newAgent.username.trim()
+      : (typeof newAgent.created_by === 'string' && newAgent.created_by.trim() ? newAgent.created_by.trim() : null);
+    if (newAgentOwner && newAgentOwner !== String(username)) {
+      throw new Error('❌ المندوب غير موجود');
+    }
+
+    const reverseOps = await _reverseBolsaTreasuryOps(bolsaId, username, tx);
+
+    const sameAgent = String(oldAgent.id) === String(newAgent.id);
+    const balanceOps = sameAgent
+      ? [{
+          op: 'update',
+          store: 'agents',
+          id: oldAgent.id,
+          patch: {
+            balance: Money.round((Number(oldAgent.balance) || 0) + currentGrandTotal - nextGrandTotal),
+          },
+        }]
+      : [
+          {
+            op: 'update',
+            store: 'agents',
+            id: oldAgent.id,
+            patch: {
+              balance: Money.round((Number(oldAgent.balance) || 0) + currentGrandTotal),
+            },
+          },
+          {
+            op: 'update',
+            store: 'agents',
+            id: newAgent.id,
+            patch: {
+              balance: Money.round((Number(newAgent.balance) || 0) - nextGrandTotal),
+            },
+          },
+        ];
+
+    const ops = [
+      ...reverseOps,
+      ...balanceOps,
+      {
+        op: 'update',
+        store: 'bolsaForms',
+        id: bolsaId,
+        patch: {
+          bolsa_date: bolsaDate,
+          agent_id: agentId,
+          rows,
+          totals: {
+            ohda: totals.ohda,
+            addition: totals.addition, // FIX #1 — persist addition
+            grand_total: nextGrandTotal,
+          },
+        },
+      },
+      {
+        op: 'add',
+        store: STORE.TREASURY,
+        payload: {
+          type: 'withdraw',
+          effect: 'bolsa_deduction',
+          amount: Money.toCents(nextGrandTotal),
+          account_type: 'cash',
+          reference_type: BOLSA_REF_TYPE,
+          reference_id: bolsaId,
+          agent_id: String(newAgent.id),
+          client_id: String(newAgent.id),
+          client_type: 'mandoub',
+          client_name: newAgent.name || null,
+          date: bolsaDate,
+          applied_at: new Date().toISOString(),
+          is_reversed: false,
+          note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
+        },
+      },
+    ];
+
+    return tx.runOps(ops);
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY, 'vehicleOwners'] });
+
+  const [saved] = results;
+
+  // FIX #4 — service-owned dispatch.
+  _emit('bolsaForms:changed');
+  _emit('agents:changed');
+
+  return Money.decimalizeRecord(saved);
+}
+
+async function deleteBolsaForm(username, id) {
+  if (!username) throw new Error('[FinancialService:deleteBolsaForm] username is required.');
+  if (!id) throw new Error('[FinancialService:deleteBolsaForm] id is required.');
+
+  const results = await DB.transaction(async (tx) => {
+    const existing = await tx.getById('bolsaForms', String(id));
+    if (!existing) {
+      throw new Error(`[FinancialService:deleteBolsaForm] Bolsa ${id} not found.`);
+    }
+    if (existing.username !== username) {
+      throw new Error('[FinancialService:deleteBolsaForm] cross-user access is forbidden.');
+    }
+
+    const grandTotal = Number(existing.totals?.grand_total) || 0;
+    const agentDelKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
+    const agent = await tx.getById('agents', agentDelKey);
+    if (!agent) {
+      throw new Error('[FinancialService:deleteBolsaForm] agent not found.');
+    }
+
+    const reverseOps = await _reverseBolsaTreasuryOps(String(id), username, tx);
+    const restoredBalance = Money.round((Number(agent.balance) || 0) + grandTotal);
+
+    const ops = [
+      ...reverseOps,
+      {
+        op: 'update',
+        store: 'agents',
+        id: agent.id,
+        patch: { balance: restoredBalance },
+      },
+      {
+        op: 'delete',
+        store: 'bolsaForms',
+        id: String(id),
+      },
+    ];
+
+    return tx.runOps(ops);
+  }, { username, stores: ['bolsaForms', 'agents', STORE.TREASURY] });
+
+  // FIX #4 — service-owned dispatch; fixes stale balances on entities/
+  // accounts pages after delete from allReceipts.
+  _emit('bolsaForms:changed');
+  _emit('agents:changed');
+
+  return Money.decimalizeRecord(results[results.length - 1]);
+}
+
 // ─── EXPORT ────────────────────────────────────────────────────────────────────
 
 
@@ -1017,6 +1456,11 @@ export const FinancialService = Object.freeze({
   createClientBalanceEntry,
   createOfficeDeposit,
   resolveHamolaPrice,
+  createBolsaForm,
+  getBolsaForms,
+  getBolsaForm,
+  updateBolsaForm,
+  deleteBolsaForm,
   updateReceiptStatus,
   updateClientUnpaidBalances,
 });
