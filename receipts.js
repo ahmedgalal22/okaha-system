@@ -145,6 +145,8 @@ function _normalizeRow(row) {
     deficit: Number(row.deficit) || 0,
     noloon: Number(row.noloon) || 0,
     ohda: Number(row.ohda) || 0,
+    officeName: normalizeOptionalString(row.officeName ?? row.office),
+    office: null,
     officeAmount: Number(row.officeAmount) || 0,
     discount: Number(row.discount) || 0,
     army: Number(row.army) || 0,
@@ -706,7 +708,7 @@ function getSnapshotCellRawValue(row, col) {
       const wt_calc = wt_w1 + wt_w2 - wt_d;
       return (wt_w1 > 0 || wt_w2 > 0) ? wt_calc : '';
     case 'office':
-      return row.office ?? '';
+      return row.officeName ?? row.office ?? '';
     case 'loading':
       return row.loading ?? '';
     case 'taktik':
@@ -2998,7 +3000,7 @@ async function loadReceiptForEdit(receiptData) {
          - (parseFloat(rowData.deficit) || 0);
     setF('receipt-weight-total',  wt.toFixed(2));
     setF('receipt-type',          rowData.type         || '');
-    setF('receipt-office',        rowData.office       || '');
+    setF('receipt-office',        rowData.officeName || rowData.office || '');
     setF('receipt-loading',       rowData.loading      || '');
     setF('receipt-taktik',        rowData.taktik       || '');
     setF('receipt-ohda',          rowData.ohda ? Money.fmt(rowData.ohda) : '');

@@ -223,13 +223,13 @@ function rowMatchesReceiptFilters(row, record, filters) {
   const hay = [
     row.kartano, row.date, row.rowdate,
     row.data, row.driver, row.owner_name, row.car, row.carNo,
-    row.vehicle_plate, row.office, row.loading, row.direction, row.taktik,
+    row.vehicle_plate, row.officeName || row.office, row.loading, row.direction, row.taktik,
     row.type, row.notes, row.noloon, row.ohda, row.net,
   ].join(' ').toLowerCase();
 
   if (global && !hay.includes(global)) return false;
   if (owner && !rowContains(row.owner_name, owner) && !rowContains(record.owner_name || record.client_name, owner)) return false;
-  if (company && !rowContains(row.office, company) && !rowContains(record.company_name, company)) return false;
+  if (company && !rowContains(row.officeName || row.office, company) && !rowContains(record.company_name, company)) return false;
   if (vehicle && !rowContains(row.car || row.carNo || row.vehicle_plate, vehicle)) return false;
   if (karta && !rowContains(row.kartano, karta)) return false;
   if (typeFilter && !rowContains(row.type, typeFilter)) return false;
@@ -298,7 +298,7 @@ function getReceiptCardsFiltered() {
         record.notes,
         ...rows.map((row) => [
           row.kartano, row.carNo, row.car, row.vehicle_plate,
-          row.owner_name, row.office, row.loading, row.direction, row.taktik, row.notes,
+          row.owner_name, row.officeName || row.office, row.loading, row.direction, row.taktik, row.notes,
           row.vehicleName, row.data, row.driver, row.date, row.rowdate, row.type,
           row.noloon, row.ohda, row.net, row.officeAmount, row.add,
         ].join(' ')),
@@ -306,7 +306,7 @@ function getReceiptCardsFiltered() {
 
       if (global && !haystack.includes(global)) return false;
       if (owner && !rowContains(record.owner_name || record.client_name, owner) && !rows.some((row) => rowContains(row.owner_name, owner))) return false;
-      if (company && !rowContains(record.company_name, company) && !rows.some((row) => rowContains(row.office, company))) return false;
+      if (company && !rowContains(record.company_name, company) && !rows.some((row) => rowContains(row.officeName || row.office, company))) return false;
       if (number && !rowContains(record.receipt_number, number)) return false;
       if (shipping && !rowContains(record.shipping_number, shipping)) return false;
       if (vehicle && !rowContains(record.vehicle_id, vehicle) && !rows.some((row) => rowContains(row.carNo || row.car || row.vehicle_plate, vehicle))) return false;
