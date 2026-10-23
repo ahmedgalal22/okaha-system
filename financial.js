@@ -167,19 +167,21 @@ function _emit(eventName) {
   }
 }
 
-// ─── BOLSA INTEGRITY (shared by CREATE and UPDATE) ─────────────────────────────
+// ─── BOLSA OWNER RESOLUTION (shared by CREATE and UPDATE) ─────────────────────────────
 //
-// One pipeline for validation + normalization, used by both create and
-// update paths so the integrity rules can never diverge.
+// One pipeline for owner validation, matching, and creation, used by both
+// create and update paths so the integrity rules can never diverge.
 //
-// MIGRATION-FRIENDLY SHAPE:
-//   The function is pure (no side effects), takes the transaction handle,
-//   and returns nothing on success / throws on failure.  When migrating,
-//   this becomes the place to add a SQL SELECT … FOR UPDATE if needed.
+// Owner matching follows the existing vehicle-owner convention: compare the
+// entered name after trimming surrounding whitespace.  A name with no active
+// owner for the current tenant plans one vehicleOwners insert; repeated rows
+// with that same trimmed name reuse the planned record.  The caller executes
+// the returned operations in the same IndexedDB transaction as the Bolsa
+// form, agent, treasury, customer-ledger, and cargo updates, so a failed save
+// cannot leave a newly created owner behind.
 //
 
-async function _assertBolsaIntegrity(tx, username, payload, opts) {
-  const { rows } = payload;
+async function _resolveBolsaRowOwners(tx, username, rows) {
   const list = Array.isArray(rows) ? rows : [];
   if (list.length === 0) {
     throw new Error('❌ يجب إضافة صف واحد على الأقل');
@@ -191,21 +193,55 @@ async function _assertBolsaIntegrity(tx, username, payload, opts) {
     if (!ownerName) throw new Error('❌ اسم صاحب المركبة مطلوب');
   }
 
-  // Step 2 — owner whitelist (must exist + not soft-deleted), scoped to the
-  // current tenant via the by_username index.  After a SQL migration this
-  // becomes the natural FK scope.
+  // Step 2 — load active owners for this tenant.  If historical duplicate
+  // records somehow share a trimmed name, the first active record wins and
+  // no additional duplicate is planned.
   const allOwners = await tx.getByIndex('vehicleOwners', 'by_username', username);
-  const ownerNames = new Set(
-    allOwners
-      .filter(o => String(o?.name || '').trim())
-      .map(o => String(o.name).trim())
-  );
-  for (const r of list) {
-    const ownerName = String(r.owner_name).trim();
-    if (!ownerNames.has(ownerName)) {
-      throw new Error(`❌ اسم صاحب المركبة غير موجود في قاعدة البيانات: ${ownerName}`);
-    }
+  const ownersByName = new Map();
+  for (const owner of allOwners) {
+    const ownerName = String(owner?.name || '').trim();
+    if (!ownerName || owner?.id == null || ownersByName.has(ownerName)) continue;
+    ownersByName.set(ownerName, {
+      id: String(owner.id),
+      name: ownerName,
+    });
   }
+
+  // Step 3 — associate every row with an existing or newly planned owner.
+  const ownerOps = [];
+  const createdOwners = [];
+  const resolvedRows = list.map((row) => {
+    const ownerName = String(row.owner_name).trim();
+    let owner = ownersByName.get(ownerName);
+
+    if (!owner) {
+      owner = {
+        id: _uuid(),
+        name: ownerName,
+      };
+      ownersByName.set(ownerName, owner);
+      createdOwners.push(owner);
+      ownerOps.push({
+        op: 'add',
+        store: 'vehicleOwners',
+        payload: {
+          id: owner.id,
+          username,
+          name: ownerName,
+          phone: null,
+          notes: null,
+        },
+      });
+    }
+
+    return {
+      ...row,
+      owner_name: ownerName,
+      owner_id: owner.id,
+    };
+  });
+
+  return { rows: resolvedRows, ownerOps, createdOwners };
 }
 
 // Normalize one row into the persisted shape.  Used by both create and
@@ -224,6 +260,7 @@ function _normalizeBolsaRow(r) {
     rowdate:    str(r?.rowdate),
     driver:     str(r?.driver),
     owner_name: str(r?.owner_name),
+    owner_id:   null,
     carNo:      str(r?.carNo),
     weight,
     weight2:    num(r?.weight2),
@@ -1265,6 +1302,7 @@ async function createBolsaForm(username, data) {
   const grandTotal = totals.grand_total;
   const cents = Money.toCents(grandTotal);
 
+  let hasCreatedOwners = false;
   const [saved] = await DB.transaction(async (tx) => {
     const agentKey = Number.isNaN(Number(agentId)) ? agentId : Number(agentId);
     const agent = await tx.getById('agents', agentKey);
@@ -1278,9 +1316,15 @@ async function createBolsaForm(username, data) {
       throw new Error('❌ المندوب غير موجود');
     }
 
-    // Unified integrity check: in-tx so it serializes with concurrent saves.
-    await _assertBolsaIntegrity(tx, username, { rows });
-    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
+    // Resolve owners in-tx so matching/creation serializes with the Bolsa
+    // persistence and all accounting writes below.
+    const {
+      rows: ownerResolvedRows,
+      ownerOps,
+      createdOwners,
+    } = await _resolveBolsaRowOwners(tx, username, rows);
+    hasCreatedOwners = createdOwners.length > 0;
+    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, ownerResolvedRows);
     const customerLedgerOps = _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, distributedRows);
 
     const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
@@ -1327,6 +1371,7 @@ async function createBolsaForm(username, data) {
           note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
+      ...ownerOps,
       ...officeHamolaOps,
       ...customerLedgerOps,
     ];
@@ -1337,6 +1382,7 @@ async function createBolsaForm(username, data) {
   // FIX #4 — service-owned dispatch, fires only after tx commits.
   _emit('bolsaForms:changed');
   _emit('agents:changed');
+  if (hasCreatedOwners) _emit('owners:changed');
 
   return saved;
 }
@@ -1408,6 +1454,7 @@ async function updateBolsaForm(username, id, data) {
   const totals = _calcBolsaTotals(rows, additionInput);
   const nextGrandTotal = totals.grand_total;
 
+  let hasCreatedOwners = false;
   const results = await DB.transaction(async (tx) => {
     const existing = await tx.getById('bolsaForms', String(id));
     if (!existing) {
@@ -1417,9 +1464,16 @@ async function updateBolsaForm(username, id, data) {
       throw new Error('[FinancialService:updateBolsaForm] cross-user access is forbidden.');
     }
 
-    // UPDATE enforces the same integrity rules as CREATE, inside the tx.
-    await _assertBolsaIntegrity(tx, username, { rows });
-    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
+    // UPDATE uses the same in-tx owner resolution as CREATE.  Planned owner
+    // inserts are executed only as part of the ops below, after the agent
+    // checks and reversal planning have also succeeded.
+    const {
+      rows: ownerResolvedRows,
+      ownerOps,
+      createdOwners,
+    } = await _resolveBolsaRowOwners(tx, username, rows);
+    hasCreatedOwners = createdOwners.length > 0;
+    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, ownerResolvedRows);
     const customerLedgerOps = _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, distributedRows);
 
     const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
@@ -1512,6 +1566,7 @@ async function updateBolsaForm(username, id, data) {
           note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
+      ...ownerOps,
       ...officeHamolaOps,
       ...customerLedgerOps,
     ];
@@ -1524,6 +1579,7 @@ async function updateBolsaForm(username, id, data) {
   // FIX #4 — service-owned dispatch.
   _emit('bolsaForms:changed');
   _emit('agents:changed');
+  if (hasCreatedOwners) _emit('owners:changed');
 
   return Money.decimalizeRecord(saved);
 }
