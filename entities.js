@@ -516,8 +516,8 @@ function _ledgerType(type) {
   if (type === 'withdraw') return 'سداد';
   if (type === 'receipt_due') return 'صافي مستحق';
   if (type === 'receipt_payment') return 'صرف نموذج';
-  if (type === 'OFFICE_DEPOSIT') return 'إيداع شركة';
-  if (type === 'OFFICE_WITHDRAW_AUTO') return 'سحب شركة';
+  if (type === 'OFFICE_DEPOSIT') return 'إيداع عميل';
+  if (type === 'OFFICE_WITHDRAW_AUTO') return 'سحب عميل';
   return type || '-';
 }
 
@@ -545,8 +545,8 @@ function _ledgerNote(entry) {
     return note || 'سلفة';
   }
   // Office entries
-  if (type === 'OFFICE_DEPOSIT') return note || 'إيداع شركة';
-  if (type === 'OFFICE_WITHDRAW_AUTO') return note || 'سحب شركة';
+  if (type === 'OFFICE_DEPOSIT') return note || 'إيداع عميل';
+  if (type === 'OFFICE_WITHDRAW_AUTO') return note || 'سحب عميل';
   // Generic
   if (note) return note;
   return _ledgerType(type);

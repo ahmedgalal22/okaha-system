@@ -188,9 +188,26 @@ function _withStableBolsaRowIds(rows) {
   });
 }
 
+function _bolsaHamolaRouteKey(loading, destination) {
+  return `${_toKey(loading)}::${_toKey(destination)}`;
+}
+
+function _bolsaHamolaComboKey(loading, destination, type) {
+  return `${_bolsaHamolaRouteKey(loading, destination)}::${_toKey(type)}`;
+}
+
+function _bolsaHamolaRowParts(row) {
+  return {
+    loading: row?.loading_place ?? row?.loading ?? '',
+    destination: row?.destination_place ?? row?.direction ?? row?.taktik ?? '',
+    type: row?.item_type ?? row?.type ?? '',
+  };
+}
+
 async function _resolveBolsaRowCompanies(tx, username, rows) {
   const offices = await tx.findByFields(STORE.OFFICES, { username });
   const officeByName = new Map();
+  const hamolaPlansByOfficeId = new Map();
 
   for (const office of offices) {
     const key = _toKey(office?.name);
@@ -199,13 +216,82 @@ async function _resolveBolsaRowCompanies(tx, username, rows) {
     }
   }
 
-  return rows.map((row) => {
+  const getHamolaPlan = (office) => {
+    const officeIdKey = String(office.id);
+    let plan = hamolaPlansByOfficeId.get(officeIdKey);
+    if (plan) return plan;
+
+    const hamolaRows = Array.isArray(office.hamolaRows) ? [...office.hamolaRows] : [];
+    const routeKeys = new Set();
+    const comboKeys = new Set();
+
+    for (const existingRow of hamolaRows) {
+      const parts = _bolsaHamolaRowParts(existingRow);
+      if (!String(parts.loading || '').trim() || !String(parts.destination || '').trim()) continue;
+      routeKeys.add(_bolsaHamolaRouteKey(parts.loading, parts.destination));
+      comboKeys.add(_bolsaHamolaComboKey(parts.loading, parts.destination, parts.type));
+    }
+
+    plan = {
+      officeId: office.id,
+      rows: hamolaRows,
+      routeKeys,
+      comboKeys,
+      changed: false,
+    };
+    hamolaPlansByOfficeId.set(officeIdKey, plan);
+    return plan;
+  };
+
+  const distributedRows = rows.map((row) => {
     const office = officeByName.get(_toKey(row.office));
+
+    if (office) {
+      const loading = String(row.loading || '').trim();
+      const destination = String(row.direction || '').trim();
+      const type = String(row.type || '').trim();
+
+      if (loading && destination) {
+        const plan = getHamolaPlan(office);
+        const routeKey = _bolsaHamolaRouteKey(loading, destination);
+        const comboKey = _bolsaHamolaComboKey(loading, destination, type);
+        const alreadyRepresented = type
+          ? plan.comboKeys.has(comboKey)
+          : plan.routeKeys.has(routeKey);
+
+        if (!alreadyRepresented) {
+          plan.rows.push({
+            id: _uuid(),
+            loading_place: loading,
+            destination_place: destination,
+            nolon: Number.isFinite(Number(row.noloon)) ? Number(row.noloon) : 0,
+            office_amount: 0,
+            item_type: type || null,
+            price: 0,
+          });
+          plan.routeKeys.add(routeKey);
+          plan.comboKeys.add(comboKey);
+          plan.changed = true;
+        }
+      }
+    }
+
     return {
       ...row,
       office_id: office ? String(office.id) : null,
     };
   });
+
+  const officeHamolaOps = [...hamolaPlansByOfficeId.values()]
+    .filter((plan) => plan.changed)
+    .map((plan) => ({
+      op: 'update',
+      store: STORE.OFFICES,
+      id: plan.officeId,
+      patch: { hamolaRows: plan.rows },
+    }));
+
+  return { rows: distributedRows, officeHamolaOps };
 }
 
 function _requireText(value, label) {
@@ -442,7 +528,7 @@ async function resolveHamolaPrice(username, officeName, loadingPlace, destinatio
 
   const office = map.get(_toKey(name));
   if (!office) {
-    throw new Error(`❌ الشركة غير موجودة: ${name}`);
+    throw new Error(`❌ العميل غير موجود: ${name}`);
   }
 
   const hamola = Array.isArray(office.hamolaRows) ? office.hamolaRows : [];
@@ -453,12 +539,12 @@ async function resolveHamolaPrice(username, officeName, loadingPlace, destinatio
   });
 
   if (!match) {
-    throw new Error(`❌ لا يوجد سعر مطابق للشركة "${name}" لمسار (${loading} → ${destination})`);
+    throw new Error(`❌ لا يوجد سعر مطابق للعميل "${name}" لمسار (${loading} → ${destination})`);
   }
 
   const price = Number(match.price);
   if (!Number.isFinite(price) || price <= 0) {
-    throw new Error(`❌ سعر التحميل غير صالح للشركة "${name}" لمسار (${loading} → ${destination})`);
+    throw new Error(`❌ سعر التحميل غير صالح للعميل "${name}" لمسار (${loading} → ${destination})`);
   }
 
   return { office, price };
@@ -1134,7 +1220,7 @@ async function createBolsaForm(username, data) {
 
     // Unified integrity check: in-tx so it serializes with concurrent saves.
     await _assertBolsaIntegrity(tx, username, { rows });
-    const distributedRows = await _resolveBolsaRowCompanies(tx, username, rows);
+    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
 
     const newBalance = Money.round((Number(agent.balance) || 0) - grandTotal);
     const ops = [
@@ -1180,6 +1266,7 @@ async function createBolsaForm(username, data) {
           note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
+      ...officeHamolaOps,
     ];
 
     return tx.runOps(ops);
@@ -1259,7 +1346,7 @@ async function updateBolsaForm(username, id, data) {
 
     // UPDATE enforces the same integrity rules as CREATE, inside the tx.
     await _assertBolsaIntegrity(tx, username, { rows });
-    const distributedRows = await _resolveBolsaRowCompanies(tx, username, rows);
+    const { rows: distributedRows, officeHamolaOps } = await _resolveBolsaRowCompanies(tx, username, rows);
 
     const currentGrandTotal = Number(existing.totals?.grand_total) || 0;
     const oldAgentKey = Number.isNaN(Number(existing.agent_id)) ? existing.agent_id : Number(existing.agent_id);
@@ -1349,6 +1436,7 @@ async function updateBolsaForm(username, id, data) {
           note: `خصم مندوب من تسجيل البوالص (${String(bolsaId)})`,
         },
       },
+      ...officeHamolaOps,
     ];
 
     return tx.runOps(ops);

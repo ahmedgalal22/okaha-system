@@ -150,8 +150,8 @@ const BolsaModule = Object.freeze({
 
 
 const COLS = [
-  'رقم الكارتة', 'التاريخ', 'اسم السائق', 'صاحب المركبة', 'رقم المركبة',
-  'وزن وش', 'اسم الشركة', 'التحميل', 'الجهة', 'النوع',
+  'رقم الكارتة', 'التاريخ', 'صاحب المركبة', 'اسم السائق', 'رقم المركبة',
+  'الوزن', 'اسم العميل', 'التحميل', 'الجهة', 'النوع',
   'العهدة', 'نولون', 'إجراءات',
 ];
 
@@ -159,8 +159,8 @@ const BOLSA_ARROW_ROW_ID = 'bolsaFillArrowRow';
 const BOLSA_FILL_COLS = [
   'bolsa-karta',
   'bolsa-rowdate',
-  'bolsa-driver',
   'bolsa-owner',
+  'bolsa-driver',
   'bolsa-car',
   'bolsa-weight',
   'bolsa-office',
@@ -177,8 +177,8 @@ let _editingBolsaFormId = null;
 const BOLSA_ENTER_NAV_ORDER = [
   'bolsa-karta',
   'bolsa-rowdate',
-  'bolsa-driver',
   'bolsa-owner',
+  'bolsa-driver',
   'bolsa-car',
   'bolsa-weight',
   'bolsa-office',
@@ -328,6 +328,9 @@ function _fillBolsaColumnDown(colIndex) {
   if (nextInp) {
     nextInp.value = sourceVal;
     nextInp.dispatchEvent(new Event('input'));
+    if (nextInp.classList.contains('bolsa-office')) {
+      nextInp.dispatchEvent(new Event('change'));
+    }
   }
 }
 
@@ -478,11 +481,11 @@ function _render() {
             <tr>
               <th class="text-center whitespace-nowrap" style="min-width:60px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">رقم الكارتة</th>
               <th class="text-center whitespace-nowrap" style="min-width:55px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">التاريخ</th>
-              <th class="text-center whitespace-nowrap" style="min-width:70px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم السائق</th>
               <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">صاحب المركبة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:70px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم السائق</th>
               <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">رقم المركبة</th>
-              <th class="text-center whitespace-nowrap" style="min-width:50px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">وزن وش</th>
-              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم الشركة</th>
+              <th class="text-center whitespace-nowrap" style="min-width:50px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">الوزن</th>
+              <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">اسم العميل</th>
               <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">التحميل</th>
               <th class="text-center whitespace-nowrap" style="min-width:80px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">الجهة</th>
               <th class="text-center whitespace-nowrap" style="min-width:45px;padding:10px 6px;font-size:12px;font-weight:700;line-height:1.4;">النوع</th>
@@ -564,13 +567,13 @@ function _rowTemplate() {
     <td class="px-1 py-1" style="min-width:55px;">
       ${inp('bolsa-rowdate', 'type="text" placeholder="يوم/شهر"')}
     </td>
-    <td class="px-1 py-1" style="min-width:70px;">
-      ${inp('bolsa-driver', 'type="text"')}
-    </td>
     <td class="px-1 py-1" style="min-width:80px;">
       ${inp('bolsa-owner', 'type="text" list="bolsaOwnersList" placeholder="صاحب المركبة"')}
       ${msgErr('owner')}
       <div class="row-msg row-msg-owner-exists field-msg-inline field-msg-inline--warn" role="status"></div>
+    </td>
+    <td class="px-1 py-1" style="min-width:70px;">
+      ${inp('bolsa-driver', 'type="text"')}
     </td>
     <td class="px-1 py-1" style="min-width:45px;">
       ${inp('bolsa-car', 'type="text"')}
@@ -579,7 +582,7 @@ function _rowTemplate() {
       ${inp('bolsa-weight', 'type="number" step="0.01" min="0"')}
     </td>
     <td class="px-1 py-1" style="min-width:80px;">
-      ${inp('bolsa-office', 'type="text" list="bolsaOfficesList" placeholder="الشركة"')}
+      ${inp('bolsa-office', 'type="text" list="bolsaOfficesList" placeholder="العميل"')}
     </td>
     <td class="px-1 py-1" style="min-width:80px;">
       ${inp('bolsa-loading', 'type="text"')}
@@ -684,15 +687,15 @@ let _bolsaRowDatalistCounter = 0;
 /**
  * _bindRowOffice(tr) — Phase 2 rewrite (TASK A).
  *
- * Wires the office input to populate the row's loading + direction
+ * Wires the office input to populate the row's loading + direction + type
  * datalists from the chosen office's hamolaRows, then auto-fills
  * noloon + type when the user picks a loading/direction combo that
  * matches a hamola entry.
  *
  * KEY DESIGN POINTS:
- *   1. The two datalists (loading + direction) are created ONCE per row,
+ *   1. The three datalists (loading + direction + type) are created ONCE per row,
  *      lazily on first office change.  IDs are stable
- *      (`bolsa_dl_loading_<n>` / `bolsa_dl_dir_<n>`).  Re-attaching
+ *      (`bolsa_dl_loading_<n>` / `bolsa_dl_dir_<n>` / `bolsa_dl_type_<n>`).  Re-attaching
  *      `list=` on the input is idempotent.
  *   2. The autoFill listeners on loading + direction inputs are attached
  *      ONCE per row.  Marked with tr.dataset.officeBound='1'.
@@ -709,7 +712,8 @@ function _bindRowOffice(tr) {
   const officeInp    = tr.querySelector('.bolsa-office');
   const loadingInp   = tr.querySelector('.bolsa-loading');
   const directionInp = tr.querySelector('.bolsa-direction');
-  if (!officeInp || !loadingInp || !directionInp) return;
+  const typeInp      = tr.querySelector('.bolsa-type');
+  if (!officeInp || !loadingInp || !directionInp || !typeInp) return;
 
   // ── Guard: ensure office change handler is attached exactly once ──────
   if (tr.dataset.officeListenerBound === '1') return;
@@ -719,19 +723,21 @@ function _bindRowOffice(tr) {
   //    office change so the autoFill closure always sees current data) ─
   tr._hamolaData = [];
 
-  // ── Lazy datalist factory: create exactly one pair per row ───────────
+  // ── Lazy datalist factory: create exactly one trio per row ───────────
   function _ensureRowDatalists() {
-    if (tr.dataset.dlLoadId && tr.dataset.dlDirId) {
+    if (tr.dataset.dlLoadId && tr.dataset.dlDirId && tr.dataset.dlTypeId) {
       // Already created; reuse them.
       return {
         dlLoad: document.getElementById(tr.dataset.dlLoadId),
         dlDir:  document.getElementById(tr.dataset.dlDirId),
+        dlType: document.getElementById(tr.dataset.dlTypeId),
       };
     }
 
     const n = ++_bolsaRowDatalistCounter;
     const dlLoadId = `bolsa_dl_loading_${n}`;
     const dlDirId  = `bolsa_dl_dir_${n}`;
+    const dlTypeId = `bolsa_dl_type_${n}`;
 
     const dlLoad = document.createElement('datalist');
     dlLoad.id = dlLoadId;
@@ -741,14 +747,20 @@ function _bindRowOffice(tr) {
     dlDir.id = dlDirId;
     document.body.appendChild(dlDir);
 
+    const dlType = document.createElement('datalist');
+    dlType.id = dlTypeId;
+    document.body.appendChild(dlType);
+
     tr.dataset.dlLoadId = dlLoadId;
     tr.dataset.dlDirId  = dlDirId;
+    tr.dataset.dlTypeId = dlTypeId;
 
     // Bind input to its datalist exactly once.
     loadingInp.setAttribute('list', dlLoadId);
     directionInp.setAttribute('list', dlDirId);
+    typeInp.setAttribute('list', dlTypeId);
 
-    return { dlLoad, dlDir };
+    return { dlLoad, dlDir, dlType };
   }
 
   // ── autoFill: pure function reading from tr._hamolaData (live slot) ──
@@ -791,12 +803,13 @@ function _bindRowOffice(tr) {
       const dls = _ensureRowDatalists();
       dls.dlLoad.innerHTML = '';
       dls.dlDir.innerHTML  = '';
+      dls.dlType.innerHTML = '';
       tr._hamolaData = [];
       return;
     }
 
     const offices = await BolsaModule.getOfficesForUser(username);
-    const office  = offices.find(o => String(o.name || '').trim() === officeName);
+    const office  = offices.find(o => String(o.name || '').trim().toLowerCase() === officeName.toLowerCase());
     const hamola  = Array.isArray(office?.hamolaRows) ? office.hamolaRows : [];
 
     const loadVals = [...new Set(
@@ -805,10 +818,14 @@ function _bindRowOffice(tr) {
     const dirVals = [...new Set(
       hamola.map(r => String(r.destination_place || r.direction || r.taktik || '').trim()).filter(Boolean)
     )];
+    const typeVals = [...new Set(
+      hamola.map(r => String(r.item_type ?? r.type ?? '').trim()).filter(Boolean)
+    )];
 
-    const { dlLoad, dlDir } = _ensureRowDatalists();
+    const { dlLoad, dlDir, dlType } = _ensureRowDatalists();
     dlLoad.innerHTML = loadVals.map(v => `<option value="${v}"></option>`).join('');
     dlDir.innerHTML  = dirVals.map(v => `<option value="${v}"></option>`).join('');
+    dlType.innerHTML = typeVals.map(v => `<option value="${v}"></option>`).join('');
 
     // Refresh the live hamola slot — autoFill reads from this slot.
     tr._hamolaData = hamola;
@@ -1061,6 +1078,9 @@ function _hydrateBolsaRows(rows) {
     set('bolsa-type', rowData.type);
     set('bolsa-ohda', rowData.ohda);
     set('bolsa-noloon', rowData.noloon);
+
+    const officeInp = tr.querySelector('.bolsa-office');
+    if (officeInp?.value) officeInp.dispatchEvent(new Event('change'));
   }
 }
 

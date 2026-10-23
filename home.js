@@ -31,11 +31,11 @@ function _render(stats) {
     <!-- بطاقة الترحيب والإحصاء -->
     <div style="background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);padding:24px;margin-bottom:20px;">
       <h2 style="font-size:1.75rem;font-weight:800;color:#1f2937;margin:0 0 6px;">مرحباً بك في نظام Karta</h2>
-      <p style="color:#4b5563;font-size:0.9375rem;margin:0 0 20px;">نظام شامل لإدارة الكارتات وأصحاب المركبات والشركات</p>
+      <p style="color:#4b5563;font-size:0.9375rem;margin:0 0 20px;">نظام شامل لإدارة الكارتات وأصحاب المركبات والعملاء</p>
 
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
         ${_statCard('أصحاب المركبات', stats.owners, 'linear-gradient(135deg,#3b82f6,#2563eb)', '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>')}
-        ${_statCard('الشركات', stats.offices, 'linear-gradient(135deg,#22c55e,#16a34a)', '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>')}
+        ${_statCard('العملاء', stats.offices, 'linear-gradient(135deg,#22c55e,#16a34a)', '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>')}
         ${_statCard('إجمالي الكارتات', stats.receipts, 'linear-gradient(135deg,#a855f7,#7c3aed)', '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>')}
         ${_statCard('قيد الانتظار', stats.pending, 'linear-gradient(135deg,#f97316,#ea580c)', '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>')}
       </div>
@@ -48,7 +48,7 @@ function _render(stats) {
       <div style="background:#fff;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);padding:24px;">
         <h3 style="font-size:1.25rem;font-weight:700;color:#1f2937;margin:0 0 16px;">مميزات النظام</h3>
         <div style="display:flex;flex-direction:column;gap:12px;">
-          ${_featureItem('إدارة شاملة لأصحاب المركبات والشركات')}
+          ${_featureItem('إدارة شاملة لأصحاب المركبات والعملاء')}
           ${_featureItem('نموذج صرف احترافي مع حسابات تلقائية')}
           ${_featureItem('تتبع المديونيات والمدفوعات')}
           ${_featureItem('طباعة احترافية لجميع التقارير')}
@@ -62,7 +62,7 @@ function _render(stats) {
         <h3 style="font-size:1.25rem;font-weight:700;color:#1f2937;margin:0 0 16px;">البدء السريع</h3>
         <div style="display:flex;flex-direction:column;gap:12px;">
           ${_stepItem(1, 'أضف أصحاب المركبات', 'ابدأ بإضافة بيانات أصحاب المركبات', '#3b82f6', '#eff6ff', 'ownersPage')}
-          ${_stepItem(2, 'أضف الشركات', 'سجل بيانات الشركات التي تتعامل معها', '#22c55e', '#f0fdf4', 'officesPage')}
+          ${_stepItem(2, 'أضف العملاء', 'سجل بيانات العملاء الذين تتعامل معهم', '#22c55e', '#f0fdf4', 'officesPage')}
           ${_stepItem(3, 'أنشئ نماذج الصرف', 'قم بإنشاء وإدارة نماذج الصرف', '#7c3aed', '#f5f3ff', 'receipt')}
         </div>
       </div>

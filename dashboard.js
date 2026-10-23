@@ -811,7 +811,7 @@ function _renderShell() {
         <div class="dashboard-header-inner">
           <div>
             <h1 class="text-2xl font-bold text-gray-800" style="margin:0 0 4px 0;">Dashboard العميل</h1>
-            <p class="text-muted text-xs" style="margin:0;">ملخص شامل للحركة المالية والربحية للمركبات والشركات</p>
+            <p class="text-muted text-xs" style="margin:0;">ملخص شامل للحركة المالية والربحية للمركبات والعملاء</p>
           </div>
           
           <!-- Filters area -->
@@ -1038,7 +1038,7 @@ function _renderSummaryCards(card1, card2, card3, card4, card5) {
     ${cardHtml('إجمالي صرف الكارتات', card1, 'صافي الصرف في الفترة المحددة', 'dashboard-stat-indigo')}
     ${cardHtml('المصروفات والمرتبات', card2, 'المصاريف التشغيلية والمرتبات المباشرة', 'dashboard-stat-rose')}
     ${cardHtml('إجمالي المكتب', card3, 'نسبة عمولة المكتب المحصلة من الكارتات', 'dashboard-stat-teal')}
-    ${cardHtml('إجمالي المحصل من الشركات', card4, 'مجموع مستحقات الحمولة من الشركات ماليًا', 'dashboard-stat-sky')}
+    ${cardHtml('إجمالي المحصل من العملاء', card4, 'مجموع مستحقات الحمولة من العملاء ماليًا', 'dashboard-stat-sky')}
     ${cardHtml('صافي الربح', card5, 'المعادلة: المحصل + المكتب - الكارتات - المصاريف', card5 >= 0 ? 'dashboard-stat-emerald' : 'dashboard-stat-rose')}
   `;
 }

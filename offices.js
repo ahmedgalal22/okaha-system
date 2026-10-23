@@ -640,16 +640,16 @@ function _renderListShell() {
 
       <!-- العنوان والأزرار -->
       <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
-        <h2 class="text-2xl font-bold text-gray-800 mb-0">إدارة الشركات</h2>
+        <h2 class="text-2xl font-bold text-gray-800 mb-0">إدارة العملاء</h2>
         <div class="flex gap-2">
-          <button type="button" data-action="office-add" style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;border-radius:10px;padding:8px 18px;font-weight:700;font-size:0.875rem;cursor:pointer;font-family:inherit;transition:box-shadow 0.2s;">➕ إضافة شركة</button>
+          <button type="button" data-action="office-add" style="background:linear-gradient(135deg,#16a34a,#15803d);color:#fff;border:none;border-radius:10px;padding:8px 18px;font-weight:700;font-size:0.875rem;cursor:pointer;font-family:inherit;transition:box-shadow 0.2s;">➕ إضافة عميل</button>
         </div>
       </div>
 
       <!-- بطاقات الملخص -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
         <div style="background:linear-gradient(135deg,#22c55e,#16a34a);border-radius:12px;padding:16px;color:#fff;">
-          <p style="font-size:0.75rem;opacity:0.9;margin:0 0 4px;">عدد الشركات</p>
+          <p style="font-size:0.75rem;opacity:0.9;margin:0 0 4px;">عدد العملاء</p>
           <p style="font-size:1.5rem;font-weight:800;margin:0;" id="officeTotalCount">0</p>
         </div>
         <div style="background:linear-gradient(135deg,#10b981,#059669);border-radius:12px;padding:16px;color:#fff;">
@@ -664,18 +664,18 @@ function _renderListShell() {
 
       <!-- شريط البحث -->
       <div class="mb-6">
-        <input id="officeSearch" type="text" class="input" placeholder="🔍 ابحث عن شركة..." style="border-radius:12px;padding:10px 16px 10px 40px;" />
+        <input id="officeSearch" type="text" class="input" placeholder="🔍 ابحث عن عميل..." style="border-radius:12px;padding:10px 16px 10px 40px;" />
       </div>
 
       <!-- قائمة الشركات -->
       <div style="margin-bottom:8px;">
-        <h3 class="text-lg font-bold text-gray-800 mb-3">قائمة الشركات</h3>
+        <h3 class="text-lg font-bold text-gray-800 mb-3">قائمة العملاء</h3>
       </div>
       <div class="table-wrapper overflow-x-auto">
         <table class="table">
           <thead style="background:linear-gradient(135deg,#1e3a8a,#2563eb);">
             <tr>
-              <th style="color:#fff;">اسم الشركة</th>
+              <th style="color:#fff;">اسم العميل</th>
               <th style="color:#fff;">رقم الهاتف</th>
               <th style="color:#fff;">إجمالي الوزن</th>
               <th style="color:#fff;">الرصيد</th>
@@ -702,7 +702,7 @@ function _renderOfficeModal() {
     <div id="officeModal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-3xl">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-bold">إضافة شركات</h3>
+          <h3 class="text-lg font-bold">إضافة عملاء</h3>
           <button type="button" data-action="office-modal-close" class="btn btn-secondary btn-sm">إغلاق</button>
         </div>
 
@@ -732,7 +732,7 @@ function _renderOfficeModal() {
 function _renderOfficeModalRow() {
   return `
     <tr>
-      <td><input type="text" class="input input-sm office-modal-name" placeholder="اسم الشركة" /></td>
+      <td><input type="text" class="input input-sm office-modal-name" placeholder="اسم العميل" /></td>
       <td><input type="text" class="input input-sm office-modal-phone" placeholder="الهاتف" /></td>
       <td><button type="button" data-action="office-modal-remove-row" class="btn btn-secondary btn-sm">حذف</button></td>
     </tr>
@@ -763,7 +763,7 @@ function _renderDetailsShell(office) {
         <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:200px;">
           <div style="width:40px;height:40px;border-radius:50%;background:#22c55e;display:flex;align-items:center;justify-content:center;color:#fff;font-size:1.125rem;flex-shrink:0;">🏢</div>
           <div>
-            <p style="font-size:0.6875rem;color:#6b7280;margin:0;">اسم الشركة</p>
+            <p style="font-size:0.6875rem;color:#6b7280;margin:0;">اسم العميل</p>
             <p style="font-size:1.0625rem;font-weight:700;color:#1f2937;margin:0;">${office.name}</p>
           </div>
         </div>
@@ -778,9 +778,9 @@ function _renderDetailsShell(office) {
 
       <!-- التبويبات -->
       <div style="display:flex;border-bottom:2px solid #e5e7eb;margin-bottom:20px;" role="tablist">
-        <button type="button" data-tab="balance" style="padding:12px 20px;border:none;border-bottom:3px solid ${_activeDetailsTab === 'balance' ? '#1f2937' : 'transparent'};background:${_activeDetailsTab === 'balance' ? '#f3f4f6' : 'transparent'};color:${_activeDetailsTab === 'balance' ? '#1f2937' : '#9ca3af'};font-weight:${_activeDetailsTab === 'balance' ? '700' : '500'};font-size:0.9375rem;cursor:pointer;font-family:inherit;transition:all 0.2s;">💰 رصيد الشركة</button>
-        <button type="button" data-tab="hamola" style="padding:12px 20px;border:none;border-bottom:3px solid ${_activeDetailsTab === 'hamola' ? '#1f2937' : 'transparent'};background:${_activeDetailsTab === 'hamola' ? '#f3f4f6' : 'transparent'};color:${_activeDetailsTab === 'hamola' ? '#1f2937' : '#9ca3af'};font-weight:${_activeDetailsTab === 'hamola' ? '700' : '500'};font-size:0.9375rem;cursor:pointer;font-family:inherit;transition:all 0.2s;">🚚 تفاصيل الحمولة</button>
         <button type="button" data-tab="cards" style="padding:12px 20px;border:none;border-bottom:3px solid ${_activeDetailsTab === 'cards' ? '#1f2937' : 'transparent'};background:${_activeDetailsTab === 'cards' ? '#f3f4f6' : 'transparent'};color:${_activeDetailsTab === 'cards' ? '#1f2937' : '#9ca3af'};font-weight:${_activeDetailsTab === 'cards' ? '700' : '500'};font-size:0.9375rem;cursor:pointer;font-family:inherit;transition:all 0.2s;">📋 الكارتات</button>
+        <button type="button" data-tab="balance" style="padding:12px 20px;border:none;border-bottom:3px solid ${_activeDetailsTab === 'balance' ? '#1f2937' : 'transparent'};background:${_activeDetailsTab === 'balance' ? '#f3f4f6' : 'transparent'};color:${_activeDetailsTab === 'balance' ? '#1f2937' : '#9ca3af'};font-weight:${_activeDetailsTab === 'balance' ? '700' : '500'};font-size:0.9375rem;cursor:pointer;font-family:inherit;transition:all 0.2s;">💰 رصيد العميل</button>
+        <button type="button" data-tab="hamola" style="padding:12px 20px;border:none;border-bottom:3px solid ${_activeDetailsTab === 'hamola' ? '#1f2937' : 'transparent'};background:${_activeDetailsTab === 'hamola' ? '#f3f4f6' : 'transparent'};color:${_activeDetailsTab === 'hamola' ? '#1f2937' : '#9ca3af'};font-weight:${_activeDetailsTab === 'hamola' ? '700' : '500'};font-size:0.9375rem;cursor:pointer;font-family:inherit;transition:all 0.2s;">🚚 تفاصيل الحمولة</button>
       </div>
 
       <div id="officeDetailsContent"></div>
@@ -1128,8 +1128,8 @@ async function loadOffices() {
   }).join('') || `<tr><td colspan="5" class="text-center text-muted p-6">
     <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px;">
       <div style="width:64px;height:64px;background:#e2e8f0;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:2rem;">🏢</div>
-      <p style="font-weight:700;color:#64748b;margin:0;">لا يوجد شركات</p>
-      <p style="font-size:0.8125rem;color:#94a3b8;margin:0;">ابدأ بإضافة الشركات من الزر أعلاه</p>
+      <p style="font-weight:700;color:#64748b;margin:0;">لا يوجد عملاء</p>
+      <p style="font-size:0.8125rem;color:#94a3b8;margin:0;">ابدأ بإضافة العملاء من الزر أعلاه</p>
     </div>
   </td></tr>`;
 }
@@ -1242,7 +1242,7 @@ function _renderOfficeBolsaCards(cards) {
 
 function _renderOfficeCards(bolsaCards = []) {
   return _renderOfficeBolsaCards(bolsaCards)
-    || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذه الشركة</div>';
+    || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذا العميل</div>';
 }
 
 async function _renderDetailsContent(office) {
@@ -1334,7 +1334,7 @@ async function _saveOfficeDeposit() {
 
   if (!_detailsOfficeId) {
     if (msg) {
-      msg.textContent = 'لا توجد شركة محددة';
+      msg.textContent = 'لا يوجد عميل محدد';
       msg.classList.add('is-visible');
     }
     return;
@@ -1497,7 +1497,7 @@ function attachOfficesPageListeners() {
     if (target.closest('[data-action="office-delete"]')) {
       const id = target.closest('[data-id]')?.dataset.id;
       if (!id) return;
-      if (!confirm('هل أنت متأكد من حذف الشركة؟')) return;
+      if (!confirm('هل أنت متأكد من حذف العميل؟')) return;
       await OfficesModule.deleteOffice(id);
       await loadOffices();
       return;
@@ -1539,7 +1539,7 @@ function attachOfficesPageListeners() {
           const { printHTML, buildPrintDocument } = await import('./printEngine.js');
           const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
           printHTML(buildPrintDocument({
-            title: 'طباعة تفاصيل الشركة',
+            title: 'طباعة تفاصيل العميل',
             body: '<h2 style="text-align:center;color:#0f766e;margin-bottom:12px;">' + (office?.name || '') + '</h2>' + content.innerHTML,
             orientation: 'portrait',
           }), { id: 'office-print-iframe' });
@@ -1612,7 +1612,7 @@ function attachOfficesPageListeners() {
   });
 
   window.addEventListener('bolsaForms:changed', async () => {
-    if (_activeDetailsTab !== 'cards' || !_detailsOfficeId) return;
+    if ((_activeDetailsTab !== 'cards' && _activeDetailsTab !== 'hamola') || !_detailsOfficeId) return;
     try {
       const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
       if (office) await _renderDetailsContent(office);
