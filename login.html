@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>تسجيل الدخول — النظام المالي</title>
+  <link rel="stylesheet" href="cairo-font.css" />
+  <link rel="stylesheet" href="tailwind.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="login-page">
+    <div class="login-card">
+
+      <!-- Header / Branding -->
+      <div class="login-header">
+        <div class="login-icon" aria-hidden="true">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+          </svg>
+        </div>
+        <h1 class="login-title">Karta System</h1>
+        <p class="login-subtitle">نظام إدارة الكارتات</p>
+      </div>
+
+      <!-- Login Form -->
+      <form id="loginForm">
+        <div class="login-field">
+          <label class="login-label" for="username">اسم المستخدم</label>
+          <input
+            id="username"
+            type="text"
+            class="login-input"
+            placeholder="أدخل اسم المستخدم"
+            required
+            autocomplete="username"
+          />
+        </div>
+
+        <div class="login-field">
+          <label class="login-label" for="password">كلمة المرور</label>
+          <input
+            id="password"
+            type="password"
+            class="login-input"
+            placeholder="أدخل كلمة المرور"
+            required
+            autocomplete="current-password"
+          />
+        </div>
+
+        <button type="submit" class="login-btn">تسجيل الدخول</button>
+      </form>
+
+      <!-- Error Message -->
+      <div id="error" class="login-error field-msg-inline field-msg-inline--error" role="alert" aria-live="polite"></div>
+
+      <!-- System Info -->
+      <div class="login-info">
+        <h3 class="login-info__title">معلومات النظام:</h3>
+        <ul class="login-info__list">
+          <li><span class="login-info__check">✓</span> نظام إدارة شامل للكارتات</li>
+          <li><span class="login-info__check">✓</span> متوافق مع جميع الأجهزة</li>
+          <li><span class="login-info__check">✓</span> واجهة عربية احترافية</li>
+          <li><span class="login-info__check">✓</span> طباعة متقدمة</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+  <script type="module" src="./auth.js"></script>
+</body>
+</html>

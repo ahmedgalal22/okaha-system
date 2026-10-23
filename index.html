@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="session-username" content="" />
+  <title>النظام المالي</title>
+  <meta name="description" content="النظام المالي - لوحة تحكم المراجعة النقدية" />
+  <link rel="stylesheet" href="cairo-font.css" />
+  <link rel="stylesheet" href="tailwind.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="header app-top">
+    <div class="header__inner py-4 px-4">
+      <div class="header__brand">
+        <button id="sidebarToggle" type="button" class="header__menu-toggle" aria-label="فتح أو غلق القائمة" title="فتح أو غلق القائمة">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 6h16"></path>
+            <path d="M4 12h16"></path>
+            <path d="M4 18h16"></path>
+          </svg>
+        </button>
+        <div class="header__logo" aria-hidden="true">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="22" height="22">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l2 2 4-4m3-4V7a2 2 0 00-2-2h-4L9 5H5a2 2 0 00-2 2v12a2 2 0 002 2h14a2 2 0 002-2v-9l-8-8z"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="header__title text-lg mb-0">النظام المالي</h1>
+          <p class="header__subtitle mb-0">لوحة تحكم المراجعة النقدية</p>
+        </div>
+      </div>
+      <div class="header__actions gap-3">
+        <button id="exportBackupBtn" type="button" class="btn btn-success btn-sm" title="تصدير نسخة احتياطية كاملة">
+          💾 نسخة احتياطية
+        </button>
+        <button id="importBackupBtn" type="button" class="btn btn-warning btn-sm" title="استيراد نسخة احتياطية">
+          📥 استيراد
+        </button>
+        <button id="logoutBtn" type="button" class="btn btn-secondary btn-sm">
+          Logout
+        </button>
+      </div>
+      <div id="backupReminderBanner" class="hidden" style="position:fixed;top:0;left:0;right:0;z-index:9999;background:#fef3c7;border-bottom:2px solid #f59e0b;padding:10px 20px;display:flex;align-items:center;justify-content:space-between;font-family:inherit;font-size:0.875rem;color:#92400e;">
+        <span>⚠️ تذكير: يُنصح بإنشاء نسخة احتياطية للنظام بشكل دوري. آخر نسخة: <span id="lastBackupDateDisplay">غير معروف</span></span>
+        <button id="dismissBackupReminder" type="button" style="background:none;border:1px solid #d97706;border-radius:6px;padding:4px 12px;color:#92400e;cursor:pointer;font-family:inherit;font-weight:700;">إغلاق</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="body-wrapper">
+    <div id="sidebar" class="sidebar sidebar-shell" role="navigation">
+      <div class="sidebar__nav">
+        <p class="sidebar-brand">التنقل</p>
+        <button type="button" data-page="homePage" class="sidebar-link active" style="margin-top: 2rem;" data-tooltip="الرئيسية" aria-label="الرئيسية">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
+          <span class="sidebar-link__label">الرئيسية</span>
+        </button>
+        <button type="button" data-page="dashboardPage" class="sidebar-link" data-tooltip="لوحة التحكم" aria-label="لوحة التحكم">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+          </svg>
+          <span class="sidebar-link__label">لوحة التحكم</span>
+        </button>
+        <button type="button" data-page="receipt" class="sidebar-link" style="margin-top: 0.5rem;" data-tooltip="نموذج الصرف" aria-label="نموذج الصرف">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          <span class="sidebar-link__label">نموذج الصرف</span>
+        </button>
+        <button type="button" data-page="bolsaPage" class="sidebar-link" data-tooltip="تفريغ البوالص" aria-label="تفريغ البوالص">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+          <span class="sidebar-link__label">تفريغ البوالص</span>
+        </button>
+        <button type="button" data-page="allReceipts" class="sidebar-link" data-tooltip="جميع النماذج" aria-label="جميع النماذج">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+          <span class="sidebar-link__label">جميع النماذج</span>
+        </button>
+        <button type="button" data-page="ownersPage" class="sidebar-link" data-tooltip="كشف حساب العملاء" aria-label="كشف حساب العملاء">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span class="sidebar-link__label">كشف حساب العملاء</span>
+        </button>
+        <button type="button" data-page="treasuryPage" class="sidebar-link" data-tooltip="الخزنة" aria-label="الخزنة">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+          <span class="sidebar-link__label">الخزنة</span>
+        </button>
+        <button type="button" data-page="officesPage" class="sidebar-link" data-tooltip="الشركات" aria-label="الشركات">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21h18M4 10h4v11H4V10zm6-7h4v18h-4V3zm6 4h4v14h-4V7z"/></svg>
+          <span class="sidebar-link__label">الشركات</span>
+        </button>
+      </div>
+      <div class="sidebar__resize-handle" role="separator" aria-label="تغيير حجم الشريط الجانبي" aria-orientation="vertical"></div>
+    </div>
+
+    <div id="mainContent" class="shell-main">
+    <div id="app" class="main p-4">
+      <section id="homePage" class="page hidden"></section>
+      <section id="dashboardPage" class="page hidden"></section>
+      <div id="receiptPage" class="page hidden"></div>
+
+      <div id="allReceiptsPage" class="page hidden card">
+        <div class="p-6 text-right">
+          <h2 class="card-title mb-2">جميع النماذج</h2>
+          <p class="text-muted text-sm mb-0">يتم عرض صفحة جميع النماذج من خلال مكونات النظام الحالية.</p>
+        </div>
+      </div>
+
+      <section id="bolsaPage" class="page hidden"></section>
+
+      <section id="ownersPage" class="page hidden">
+        <div class="p-6 text-right card">
+          <div class="card-header mb-0">
+            <h2 class="card-title mb-0">كشف حساب العملاء</h2>
+          </div>
+
+          <div class="form-section mt-6">
+            <div class="flex flex-wrap gap-3 mb-4 items-end">
+              <div class="form-group mb-0 form-field-narrow">
+                <label class="label mb-2" for="ownerNameInput">اسم صاحب المركبة</label>
+                <input id="ownerNameInput" type="text" placeholder="اسم صاحب المركبة" class="input input-sm" />
+              </div>
+              <div class="form-group mb-0 form-field-narrow">
+                <label class="label mb-2" for="ownerNotesInput">ملاحظات</label>
+                <input id="ownerNotesInput" type="text" placeholder="ملاحظات (اختياري)" class="input input-sm" />
+              </div>
+              <button id="addOwnerBtn" type="button" class="btn btn-primary mb-1">➕ إضافة صاحب مركبة</button>
+            </div>
+            <div class="form-group mb-0 form-field-search">
+              <label class="label mb-2" for="ownerSearchInput">بحث</label>
+              <input id="ownerSearchInput" type="text" placeholder="بحث بالاسم" class="input input-sm" />
+            </div>
+          </div>
+
+          <div class="table-wrapper overflow-x-auto mt-6 mb-6">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>الاسم</th>
+                  <th>الرصيد</th>
+                  <th>إجراءات</th>
+                </tr>
+              </thead>
+              <tbody id="ownersTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="ownerDetailsPage" class="page hidden"></section>
+      <section id="agentDetailsPage" class="page hidden"></section>
+      <section id="treasuryPage" class="page hidden"></section>
+      <section id="officesPage" class="page hidden"></section>
+      <section id="officeDetailsPage" class="page hidden"></section>
+    </div>
+    </div>
+  </div>
+  <script src="./xlsx.full.min.js"></script>
+  <script type="module" src="./app.js?v=20260524"></script>
+</body>
+</html>
