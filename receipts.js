@@ -799,7 +799,7 @@ function renderReceiptSnapshotRowsHtml(rows, options = {}) {
 function renderHeader() {
   return `
     <div class="flex items-center justify-between mb-4 no-print" style="padding: 24px 24px 0 24px;">
-      <h2 class="text-2xl font-bold text-gray-800" style="margin:0;">نموذج الصرف</h2>
+      <h2 class="text-2xl font-bold text-gray-800" style="margin:0;">صرف الكارتات</h2>
     </div>
     <div class="no-print" style="padding: 12px 24px 0 24px;"></div>`;
 }
