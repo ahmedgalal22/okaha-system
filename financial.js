@@ -86,8 +86,8 @@ function _calcBolsaTotals(rows, addition = 0) {
   };
 }
 
-function _bolsaCustomerTotals(rows) {
-  const totals = new Map();
+function _bolsaCustomerRowDeductions(rows) {
+  const deductions = [];
 
   for (const row of Array.isArray(rows) ? rows : []) {
     if (!row || row.office_id == null) continue;
@@ -101,25 +101,21 @@ function _bolsaCustomerTotals(rows) {
     const cents = Money.toCents(totalPrice);
     if (cents === 0) continue;
 
-    const current = totals.get(officeId) || {
+    deductions.push({
       officeId,
       officeName: String(row.office || '').trim() || null,
-      cents: 0,
-    };
-    current.cents += cents;
-    if (!current.officeName && row.office) {
-      current.officeName = String(row.office).trim() || null;
-    }
-    totals.set(officeId, current);
+      driverName: String(row.driver || '').trim(),
+      cents,
+    });
   }
 
-  return [...totals.values()].filter((item) => item.cents !== 0);
+  return deductions;
 }
 
 function _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, rows) {
   const appliedAt = new Date().toISOString();
 
-  return _bolsaCustomerTotals(rows).map(({ officeId, officeName, cents }) => ({
+  return _bolsaCustomerRowDeductions(rows).map(({ officeId, officeName, driverName, cents }) => ({
     op: 'add',
     store: STORE.LEDGER,
     payload: {
@@ -142,7 +138,7 @@ function _buildBolsaCustomerLedgerOps(username, bolsaId, bolsaDate, rows) {
       date: bolsaDate,
       applied_at: appliedAt,
       is_reversed: false,
-      note: `خصم إجمالي السعر الكلي من تسجيل البوالص (${String(bolsaId)})`,
+      note: `تكلفة كارتة - ${driverName}`,
     },
   }));
 }

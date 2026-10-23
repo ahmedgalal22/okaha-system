@@ -344,6 +344,18 @@ function _calcBolsaNet(row) {
   return price * w;
 }
 
+function _resolveBolsaSummaryOffice(row, officeById, officeByName) {
+  if (!row) return null;
+
+  if (Object.prototype.hasOwnProperty.call(row, 'office_id')) {
+    return row.office_id == null
+      ? null
+      : officeById.get(String(row.office_id)) || null;
+  }
+
+  return officeByName.get(String(row.office || '').trim().toLowerCase()) || null;
+}
+
 function _resolveRange(filters) {
   if (!filters || typeof filters !== 'object') return null;
 
@@ -399,31 +411,33 @@ async function getOfficeFinancialSummary(username, filters = null) {
 
   const range = _resolveRange(filters);
   const useBolsa = Boolean(range);
+  const officeById = new Map(offices.map((o) => [String(o.id), o]));
+  const weightCentsByOfficeId = new Map(offices.map((o) => [String(o.id), 0]));
 
-  if (useBolsa) {
-    const forms = await DB.findByFields(BOLSA_STORE, { username });
-    const filtered = range
-      ? forms.filter((f) => {
-          const t = new Date(f.bolsa_date || 0).getTime();
-          return t >= range.from && t <= range.to;
-        })
-      : forms;
+  const forms = await DB.findByFields(BOLSA_STORE, { username });
+  const relevantForms = range
+    ? forms.filter((f) => {
+        const t = new Date(f.bolsa_date || 0).getTime();
+        return t >= range.from && t <= range.to;
+      })
+    : forms;
 
-    for (const form of filtered) {
-      const rows = Array.isArray(form.rows) ? form.rows : [];
-      for (const row of rows) {
-        const officeName = String(row.office || '').trim();
-        if (!officeName) continue;
-        const office = nameMap.get(officeName.toLowerCase());
-        if (!office) {
-          throw new Error(`[OfficesService] unknown office: ${officeName}`);
-        }
-        const item = summary.get(String(office.id));
-        item.weight += (Number(row.weight) || 0) + (Number(row.weight2) || 0);
-        item.net += _calcBolsaNet(row);
-      }
+  for (const form of relevantForms) {
+    const rows = Array.isArray(form.rows) ? form.rows : [];
+    for (const row of rows) {
+      const office = _resolveBolsaSummaryOffice(row, officeById, nameMap);
+      if (!office) continue;
+      const officeId = String(office.id);
+      const item = summary.get(officeId);
+      weightCentsByOfficeId.set(
+        officeId,
+        weightCentsByOfficeId.get(officeId) + Money.toCents(_optionalFiniteNumber(row.weight) ?? 0),
+      );
+      if (useBolsa) item.net += _calcBolsaNet(row);
     }
-  } else {
+  }
+
+  if (!useBolsa) {
     const receipts = await DB.findByFields(RECEIPTS_STORE, { username });
     for (const receipt of receipts) {
       const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
@@ -436,10 +450,13 @@ async function getOfficeFinancialSummary(username, filters = null) {
           throw new Error(`[OfficesService] unknown office: ${officeName}`);
         }
         const item = summary.get(String(office.id));
-        item.weight += _calcWeight(row);
         item.net += _calcReceiptNet(row);
       }
     }
+  }
+
+  for (const item of summary.values()) {
+    item.weight = Money.toDecimal(weightCentsByOfficeId.get(String(item.office.id)) || 0);
   }
 
   const rows = Array.from(summary.values());
@@ -922,7 +939,7 @@ function _renderOfficeBalance(entries) {
         <td>${entryTypeLabel(entry)}</td>
         <td>${delta < 0 ? '-' : ''}${_fmt(Math.abs(delta))}</td>
         <td>${_fmt(balance)}</td>
-        <td>${_text(entry.type === 'OFFICE_DEPOSIT' ? (entry.note || entry.reference_number || entry.reference_id || '-') : (entry.reference_number || entry.reference_id || '-'))}</td>
+        <td>${_text(entry.reference_type === 'bolsa' ? (entry.note || entry.reference_id || '-') : entry.type === 'OFFICE_DEPOSIT' ? (entry.note || entry.reference_number || entry.reference_id || '-') : (entry.reference_number || entry.reference_id || '-'))}</td>
       </tr>
     `).join('')
     : `<tr><td colspan="5" class="text-center text-muted p-4">لا توجد حركات</td></tr>`;

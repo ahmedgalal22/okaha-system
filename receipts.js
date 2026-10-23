@@ -944,11 +944,6 @@ function renderTableSectionHeader() {
           </svg>
           إضافة صف
         </button>
-        <button type="button" data-action="clear-receipt-table"
-          class="receipt-header-btn receipt-header-btn--orange"
-          title="مسح بيانات جدول الصرف الحالي فقط">
-          مسح بيانات الجدول
-        </button>
         <button type="button" data-action="add-4-rows"
           class="receipt-header-btn receipt-header-btn--blue"
           title="إضافة 4 صفوف دفعة واحدة">
@@ -2904,20 +2899,6 @@ function clearReceiptSilent() {
   generateReceiptNumber();
 }
 
-function clearReceiptTable() {
-  if (_isSaving) return;
-  if (!confirm('هل أنت متأكد من مسح بيانات جدول الصرف الحالية؟ لن يتم حذف أي نموذج محفوظ.')) return;
-
-  const tbody = document.getElementById('receiptTableBody');
-  if (!tbody) return;
-
-  tbody.innerHTML = '';
-  receiptRowCounter = 0;
-  ensureReceiptArrowRow();
-  addReceiptRow(1);
-  calculateTotals();
-}
-
 function clearReceipt() {
   if (!confirm('هل أنت متأكد من مسح جميع البيانات؟')) return;
   clearReceiptSilent();
@@ -3154,11 +3135,6 @@ function attachPageListeners() {
       clearReceipt();
       return;
     }
-    // مسح صفوف الجدول الحالي فقط
-    if (e.target.closest('[data-action="clear-receipt-table"]')) {
-      clearReceiptTable();
-      return;
-    }
     // إلغاء تعديل
     if (e.target.closest('[data-action="cancel-edit"]')) {
       cancelReceiptEdit();
@@ -3258,7 +3234,6 @@ export {
   fillColumnDown,
   saveReceipt,
   clearReceipt,
-  clearReceiptTable,
   clearReceiptSilent,
   cancelReceiptEdit,
   printReceipt,

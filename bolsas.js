@@ -174,6 +174,7 @@ const BOLSA_FILL_COLS = [
 ];
 
 let _editingBolsaFormId = null;
+let _bolsaListenersBound = false;
 
 const BOLSA_ENTER_NAV_ORDER = [
   'bolsa-karta',
@@ -466,6 +467,11 @@ function _render() {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
             </svg>
             إضافة 4 صفوف
+          </button>
+          <button type="button" data-action="bolsa-clear-table"
+            class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg transition flex items-center gap-2"
+            title="مسح بيانات جدول تسجيل البوالص الحالي فقط">
+            مسح بيانات الجدول
           </button>
         </div>
       </div>
@@ -1078,6 +1084,15 @@ function _clearBolsaRows() {
   if (tbody) tbody.innerHTML = '';
 }
 
+function _clearBolsaTable() {
+  if (!confirm('هل أنت متأكد من مسح بيانات جدول تسجيل البوالص الحالية؟ لن يتم حذف أي نموذج محفوظ.')) return;
+
+  _clearBolsaRows();
+  _addRow();
+  _recalcTotals();
+  _topError(null);
+}
+
 function _hydrateBolsaRows(rows) {
   _clearBolsaRows();
   const list = Array.isArray(rows) ? rows : [];
@@ -1252,6 +1267,9 @@ function initBolsaPage() {
   // seed first row
   _addRow();
 
+  if (_bolsaListenersBound) return;
+  _bolsaListenersBound = true;
+
   // Addition input listener
   document.addEventListener('input', (e) => {
     if (e.target.id === 'bolsaAddition') _recalcTotals();
@@ -1271,6 +1289,10 @@ function initBolsaPage() {
     }
     if (e.target.closest('[data-action="bolsa-add-4-rows"]')) {
       _addRow(); _addRow(); _addRow(); _addRow();
+      return;
+    }
+    if (e.target.closest('[data-action="bolsa-clear-table"]')) {
+      _clearBolsaTable();
       return;
     }
     if (e.target.closest('[data-action="bolsa-save"]')) {
