@@ -1157,63 +1157,6 @@ async function showOfficeDetails(id) {
 }
 
 
-/**
- * Get all receipt rows linked to a specific office/company.
- * Each row includes parent receipt metadata for display.
- * 
- * MySQL-ready: This will become:
- *   SELECT rr.*, r.receipt_number, r.client_name, r.payout_status
- *   FROM receipt_rows rr
- *   JOIN receipts r ON rr.receipt_id = r.id
- *   WHERE rr.office = ?
- */
-async function _getOfficeCards(office) {
-  const username = _moduleSessionUsername();
-  const officeName = String(office.name || '').trim().toLowerCase();
-  const allReceipts = await DB.findByFields(RECEIPTS_STORE, { username });
-
-  const cards = [];
-  for (const receipt of allReceipts) {
-    if (receipt.deleted_at !== null) continue;
-    const rows = Array.isArray(receipt.rows) ? receipt.rows : [];
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      if (!row || row._type === 'separator') continue;
-      const rowOffice = String(row.office || '').trim().toLowerCase();
-      if (rowOffice !== officeName) continue;
-
-      cards.push({
-        receipt_id: receipt.id,
-        receipt_number: receipt.receipt_number || '',
-        client_name: receipt.client_name || receipt.owner_name || '',
-        payout_status: receipt.payout_status || 'unpaid',
-        receipt_date: receipt.receipt_date || '',
-        row_index: i,
-        _rowId: row._rowId || null,
-        kartano: row.kartano || '',
-        date: row.date || '',
-        car: row.car || row.carNo || row.vehicle_plate || '',
-        driver: row.data || row.driver || row.driver_name || '',
-        weight: (Number(row.weight) || 0) + (Number(row.weight2) || 0),
-        noloon: Number(row.noloon) || 0,
-        loading: row.loading || '',
-        taktik: row.taktik || row.direction || '',
-        type: row.type || '',
-        notes: row.notes || '',
-      });
-    }
-  }
-
-  // Sort by receipt date descending
-  cards.sort((a, b) => {
-    const da = new Date(b.receipt_date || 0).getTime();
-    const db = new Date(a.receipt_date || 0).getTime();
-    return da - db;
-  });
-
-  return cards;
-}
-
 async function _getOfficeBolsaCards(office) {
   const username = _moduleSessionUsername();
   const officeId = String(office.id);
@@ -1297,75 +1240,9 @@ function _renderOfficeBolsaCards(cards) {
     </section>`;
 }
 
-function _renderOfficeCards(cards, bolsaCards = []) {
-  const totalWeight = cards.reduce((s, c) => s + c.weight, 0);
-  const totalNoloon = cards.reduce((s, c) => s + c.noloon, 0);
-
-  const summaryHTML = `
-    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
-      <div style="flex:1;min-width:120px;background:linear-gradient(135deg,#6b7280,#4b5563);border-radius:12px;padding:12px 16px;color:#fff;">
-        <p style="font-size:0.75rem;opacity:0.9;margin:0 0 4px;">عدد الكارتات</p>
-        <p style="font-size:1.25rem;font-weight:800;margin:0;">${cards.length}</p>
-      </div>
-      <div style="flex:1;min-width:120px;background:linear-gradient(135deg,#0f766e,#0d9488);border-radius:12px;padding:12px 16px;color:#fff;">
-        <p style="font-size:0.75rem;opacity:0.9;margin:0 0 4px;">إجمالي الوزن</p>
-        <p style="font-size:1.25rem;font-weight:800;margin:0;">${_fmt(totalWeight)}</p>
-      </div>
-      <div style="flex:1;min-width:120px;background:linear-gradient(135deg,#2563eb,#1d4ed8);border-radius:12px;padding:12px 16px;color:#fff;">
-        <p style="font-size:0.75rem;opacity:0.9;margin:0 0 4px;">إجمالي النولون</p>
-        <p style="font-size:1.25rem;font-weight:800;margin:0;">${_fmt(totalNoloon)}</p>
-      </div>
-    </div>`;
-
-  const bolsaHTML = _renderOfficeBolsaCards(bolsaCards);
-
-  if (cards.length === 0) {
-    return summaryHTML + (bolsaHTML || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذه الشركة</div>');
-  }
-
-  const statusLabel = (s) => s === 'paid' ? '<span style="color:#16a34a;font-weight:700;">تم صرفه</span>' : '<span style="color:#dc2626;font-weight:700;">لم يتم صرفه</span>';
-
-  const tableRows = cards.map(c => `
-    <tr>
-      <td>${_text(c.receipt_number)}</td>
-      <td>${_text(c.client_name)}</td>
-      <td>${_text(c.kartano)}</td>
-      <td>${_text(c.date)}</td>
-      <td>${_text(c.car)}</td>
-      <td>${_text(c.driver)}</td>
-      <td>${_fmt(c.weight)}</td>
-      <td>${_fmt(c.noloon)}</td>
-      <td>${_text(c.loading)}</td>
-      <td>${_text(c.taktik)}</td>
-      <td>${_text(c.type)}</td>
-      <td>${statusLabel(c.payout_status)}</td>
-      <td>${_text(c.notes)}</td>
-    </tr>
-  `).join('');
-
-  return summaryHTML + `
-    <div class="table-wrapper" style="max-height:60vh;overflow-y:auto;">
-      <table class="table">
-        <thead style="background:linear-gradient(135deg,#1e3a8a,#2563eb);">
-          <tr>
-            <th style="color:#fff;">رقم الإذن</th>
-            <th style="color:#fff;">العميل</th>
-            <th style="color:#fff;">رقم الكارتة</th>
-            <th style="color:#fff;">التاريخ</th>
-            <th style="color:#fff;">رقم المركبة</th>
-            <th style="color:#fff;">السائق</th>
-            <th style="color:#fff;">الوزن</th>
-            <th style="color:#fff;">النولون</th>
-            <th style="color:#fff;">التحميل</th>
-            <th style="color:#fff;">الجهة</th>
-            <th style="color:#fff;">النوع</th>
-            <th style="color:#fff;">الحالة</th>
-            <th style="color:#fff;">ملاحظات</th>
-          </tr>
-        </thead>
-        <tbody>${tableRows}</tbody>
-      </table>
-    </div>` + bolsaHTML;
+function _renderOfficeCards(bolsaCards = []) {
+  return _renderOfficeBolsaCards(bolsaCards)
+    || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذه الشركة</div>';
 }
 
 async function _renderDetailsContent(office) {
@@ -1386,9 +1263,8 @@ async function _renderDetailsContent(office) {
 
   if (_activeDetailsTab === 'cards') {
     content.innerHTML = '<div style="text-align:center;padding:24px;color:#9ca3af;">جاري التحميل...</div>';
-    const cardsData = await _getOfficeCards(office);
     const bolsaCardsData = await _getOfficeBolsaCards(office);
-    content.innerHTML = _renderOfficeCards(cardsData, bolsaCardsData);
+    content.innerHTML = _renderOfficeCards(bolsaCardsData);
   }
 }
 
