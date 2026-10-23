@@ -31,7 +31,7 @@ const DB = (() => {
   // ─── CONFIGURATION ──────────────────────────────────────────────────────────
 
   const DB_NAME    = 'FinancialOpsDB';
-  const DB_VERSION = 6;              // bumped: counters store + mainCapitalTreasury store
+  const DB_VERSION = 8;              // bumped: recreate bolsa stores deleted by the reverted v7 change
 
   /**
    * STORES schema.
@@ -393,6 +393,27 @@ const DB = (() => {
               store.createIndex(name, keyPath, options || {});
             });
           }
+        }
+
+        // ── VERSION 8 → recreate bolsa stores removed by a reverted change ──
+        // An earlier build (v7, since reverted) deleted the bolsa and
+        // bolsaForms stores. Databases that already upgraded to v7 are
+        // missing them — and sit ABOVE this app's previous version (6),
+        // which IndexedDB would reject — so the version moves past 7 and
+        // this step recreates any of the two stores that are missing.
+        // Stores that still exist are left untouched (no data loss).
+        if (oldVer < 8) {
+          [STORES.bolsa, STORES.bolsaForms].forEach((storeDef) => {
+            if (storeDef && !db.objectStoreNames.contains(storeDef.name)) {
+              const store = db.createObjectStore(storeDef.name, {
+                keyPath       : storeDef.keyPath,
+                autoIncrement : storeDef.autoIncrement,
+              });
+              (storeDef.indexes || []).forEach(({ name, keyPath, options }) => {
+                store.createIndex(name, keyPath, options || {});
+              });
+            }
+          });
         }
       };
 
