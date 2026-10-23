@@ -129,6 +129,8 @@ function _normalizeRow(row) {
     };
   }
 
+  const weight = Number(row.weight) || 0;
+  const deficit = Number(row.deficit) || 0;
   const net = calculateRowNet(row);
 
   return {
@@ -140,16 +142,18 @@ function _normalizeRow(row) {
     vehicle_id   : row.vehicle_id != null ? String(row.vehicle_id).trim() : null,
     vehicle_plate: normalizeOptionalString(row.vehicle_plate ?? row.car),
     rowPayment   : row.rowPayment || ROW_PAYMENT.PENDING,
-    weight: Number(row.weight) || 0,
-    weight2: Number(row.weight2) || 0,
-    deficit: Number(row.deficit) || 0,
+    weight,
+    // Legacy compatibility fields: removed payout columns no longer affect totals.
+    weight2: 0,
+    deficit,
+    weightTotal: weight - deficit,
     noloon: Number(row.noloon) || 0,
     ohda: Number(row.ohda) || 0,
     officeName: normalizeOptionalString(row.officeName ?? row.office),
     office: null,
     officeAmount: Number(row.officeAmount) || 0,
     discount: Number(row.discount) || 0,
-    army: Number(row.army) || 0,
+    army: 0,
     add: Number(row.add) || 0,
     net,
   };
@@ -557,12 +561,8 @@ const COL_DEFS = [
   { key: 'car',          label: 'رقم المركبة',        cls: 'receipt-car',          type: 'text',   minW: '80px',  printHide: false },
   // index: 5
   { key: 'weight',       label: 'وزن وش',             cls: 'receipt-weight',       type: 'number', minW: '55px',  printHide: false, printConditional: true },
-  // index: 6
-  { key: 'weight2',      label: 'وزن م',              cls: 'receipt-weight2',      type: 'number', minW: '55px',  printHide: false, printConditional: true },
   // index: 7
   { key: 'deficit',      label: 'عجز',                cls: 'receipt-deficit',      type: 'number', minW: '45px',  printHide: false },
-  // index: 8
-  { key: 'weightTotal',  label: 'الوزن',              cls: 'receipt-weight-total', type: 'number', minW: '60px',  printHide: false, readonly: true },
   // index: 9  ← اسم الشركة (office) — مخفي في الطباعة (Feature 4)
   { key: 'office',       label: 'اسم العميل',         cls: 'receipt-office',       type: 'text',   minW: '90px',  printHide: true  },
   // index: 10
@@ -581,8 +581,6 @@ const COL_DEFS = [
   { key: 'add',          label: 'إضافة',              cls: 'receipt-add',          type: 'number', minW: '45px',  printHide: false, printConditional: true },
   // index: 17 (New)
   { key: 'discount',     label: 'خصم',               cls: 'receipt-discount',     type: 'number', minW: '45px',  printHide: false, printConditional: true },
-  // index: 18 (New)
-  { key: 'army',         label: 'جيش',               cls: 'receipt-army',         type: 'number', minW: '45px',  printHide: false, printConditional: true },
   // index: 19
   { key: 'net',          label: 'الصافي',             cls: 'receipt-net',          type: 'number', minW: '90px',  printHide: false, readonly: true },
   // index: 18 — إجراءات (no print)
@@ -590,7 +588,7 @@ const COL_DEFS = [
 ];
 
 // عدد أعمدة البيانات (بدون إجراءات)
-const DATA_COL_COUNT = COL_DEFS.filter(c => c.key !== '_actions').length; // 17
+const DATA_COL_COUNT = COL_DEFS.filter(c => c.key !== '_actions').length; // 16
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
@@ -630,16 +628,16 @@ function _separatorRowInnerHTML(subtotal, vehicleValue = '', notesValue = '') {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // colspan يغطي أعمدة الجدول (19) مقسمة: 7 يسار + 10 يمين + 2 إجراءات
+  // colspan يغطي أعمدة الجدول (17) مقسمة: 6 يسار + 9 يمين + 2 إجراءات
   return `
-    <td colspan="7" class="px-2 py-2 bg-orange-50">
+    <td colspan="6" class="px-2 py-2 bg-orange-50">
       <div class="flex items-center gap-2">
         <span class="text-orange-700 font-bold text-xs whitespace-nowrap">🔄 رقم المركبة:</span>
         <input type="text" class="separator-vehicle-name px-2 py-1 border-2 border-orange-400 rounded text-xs font-bold w-40 focus:ring-1 focus:ring-orange-500 outline-none bg-white"
           placeholder="أدخل رقم المركبة" value="${esc}">
       </div>
     </td>
-    <td colspan="10" class="px-2 py-2 bg-orange-50 text-left">
+    <td colspan="9" class="px-2 py-2 bg-orange-50 text-left">
       <div class="flex items-center gap-2 justify-end">
         <span class="text-orange-700 font-bold text-xs whitespace-nowrap">إجمالي ما سبق:</span>
         <span class="separator-subtotal text-orange-800 font-bold text-sm bg-orange-100 px-3 py-1 rounded border border-orange-300">${tFmt(Number(subtotal) || 0)}</span>
@@ -695,18 +693,8 @@ function getSnapshotCellRawValue(row, col) {
       return _carVal;
     }
     case 'weight':
-    case 'weight2':
     case 'deficit':
       return row[col.key] ?? '';
-    case 'weightTotal':
-      if (row.weightTotal != null && row.weightTotal !== '') return row.weightTotal;
-      if (row.weight_total != null && row.weight_total !== '') return row.weight_total;
-      // Fallback: calculate from weight/weight2/deficit for old saved data
-      const wt_w1 = Number(row.weight) || 0;
-      const wt_w2 = Number(row.weight2) || 0;
-      const wt_d = Number(row.deficit) || 0;
-      const wt_calc = wt_w1 + wt_w2 - wt_d;
-      return (wt_w1 > 0 || wt_w2 > 0) ? wt_calc : '';
     case 'office':
       return row.officeName ?? row.office ?? '';
     case 'loading':
@@ -720,7 +708,6 @@ function getSnapshotCellRawValue(row, col) {
     case 'officeAmount':
     case 'add':
     case 'discount':
-    case 'army':
     case 'net':
       return row[col.key] ?? '';
     default:
@@ -730,7 +717,7 @@ function getSnapshotCellRawValue(row, col) {
 
 function formatSnapshotCellValue(row, col) {
   const raw = getSnapshotCellRawValue(row, col);
-  if (col.key === 'add' || col.key === 'discount' || col.key === 'army') {
+  if (col.key === 'add' || col.key === 'discount') {
     const val = parseFloat(raw) || 0;
     if (val === 0) {
       return '';
@@ -1455,15 +1442,6 @@ function _buildRowHTML() {
         </td>`;
     }
 
-    if (col.key === 'weightTotal') {
-      return `
-        <td class="px-1 py-1 text-center${printClass}">
-          <input type="number"
-            class="${col.cls} w-full px-1 py-1 border border-gray-300 rounded bg-blue-50 text-xs font-semibold text-blue-900"
-            readonly value="0">
-        </td>`;
-    }
-
     // owner column removed — warning moved to car column
 
     if (col.key === 'data') {
@@ -1669,15 +1647,12 @@ function attachRowCalculation(row) {
   if (!row || row.classList.contains(SEPARATOR_CLASS)) return;
 
   const weight    = row.querySelector('.receipt-weight');
-  const weight2   = row.querySelector('.receipt-weight2');
   const deficit   = row.querySelector('.receipt-deficit');
-  const weightTot = row.querySelector('.receipt-weight-total');
   const noloon    = row.querySelector('.receipt-noloon');
   const ohda      = row.querySelector('.receipt-ohda');
   const officeAmt = row.querySelector('.receipt-office-amount');
   const add       = row.querySelector('.receipt-add');
   const discount  = row.querySelector('.receipt-discount');
-  const army      = row.querySelector('.receipt-army');
   const net       = row.querySelector('.receipt-net');
   const officeInp = row.querySelector('.receipt-office');
   const loadingInp = row.querySelector('.receipt-loading');
@@ -1686,30 +1661,24 @@ function attachRowCalculation(row) {
   if (!net) return;
 
   function calculateNet() {
-    const w1   = parseFloat(weight?.value)    || 0;
-    const w2   = parseFloat(weight2?.value)   || 0;
+    const w    = parseFloat(weight?.value)    || 0;
     const d    = parseFloat(deficit?.value)   || 0;
     const n    = parseFloat(noloon?.value)    || 0;
     const o    = parseFloat(ohda?.value)      || 0;
     const of_  = parseFloat(officeAmt?.value) || 0;
     const a    = parseFloat(add?.value)       || 0;
     const disc = parseFloat(discount?.value)  || 0;
-    const arm  = parseFloat(army?.value)      || 0;
-    const wt   = (w1 + w2) - d;
-    if (weightTot) weightTot.value = wt.toFixed(2);
-    net.value  = (wt * n - (o + of_ + disc) + a + arm).toFixed(2);
+    net.value  = ((w - d) * n - (o + of_ + disc) + a).toFixed(2);
     calculateTotals();
   }
 
   weight    && weight.addEventListener('input',    calculateNet);
-  weight2   && weight2.addEventListener('input',   calculateNet);
   deficit   && deficit.addEventListener('input',   calculateNet);
   noloon    && noloon.addEventListener('input',    calculateNet);
   ohda      && ohda.addEventListener('input',      calculateNet);
   officeAmt && officeAmt.addEventListener('input', calculateNet);
   add       && add.addEventListener('input',       calculateNet);
   discount  && discount.addEventListener('input',  calculateNet);
-  army      && army.addEventListener('input',      calculateNet);
 
   // ── Office → loading / taktik / noloon autofill ──
 
@@ -2050,9 +2019,9 @@ function attachInputRestrictions(row) {
 
   // الحقول الرقمية — منع الأحرف النصية
   const numericClasses = [
-    'receipt-weight', 'receipt-weight2', 'receipt-deficit',
+    'receipt-weight', 'receipt-deficit',
     'receipt-noloon', 'receipt-ohda', 'receipt-office-amount',
-    'receipt-add', 'receipt-discount', 'receipt-army', 'receipt-net',
+    'receipt-add', 'receipt-discount', 'receipt-net',
   ];
 
   numericClasses.forEach(cls => {
@@ -2424,14 +2393,11 @@ async function collectReceiptRows() {
       type         : normalizeOptionalString(_field(row, 'receipt-type')),
       office       : normalizeOptionalString(_field(row, 'receipt-office')),
       weight       : _num(row, 'receipt-weight'),
-      weight2      : _num(row, 'receipt-weight2'),
       deficit      : _num(row, 'receipt-deficit'),
-      weightTotal  : _num(row, 'receipt-weight') + _num(row, 'receipt-weight2') - _num(row, 'receipt-deficit'),
       noloon       : _num(row, 'receipt-noloon'),
       ohda         : _num(row, 'receipt-ohda'),
       officeAmount : _num(row, 'receipt-office-amount'),
       discount     : _num(row, 'receipt-discount'),
-      army         : _num(row, 'receipt-army'),
       add          : _num(row, 'receipt-add'),
       net          : _num(row, 'receipt-net'),
     });
@@ -2993,12 +2959,7 @@ async function loadReceiptForEdit(receiptData) {
     // receipt-owner removed from table
     setF('receipt-car',           rowData.vehicle_plate || rowData.car || '');
     setF('receipt-weight',        rowData.weight ? Money.fmt(rowData.weight) : '');
-    setF('receipt-weight2',       rowData.weight2 ? Money.fmt(rowData.weight2) : '');
     setF('receipt-deficit',       rowData.deficit ? Money.fmt(rowData.deficit) : '');
-    const wt = (parseFloat(rowData.weight) || 0)
-         + (parseFloat(rowData.weight2) || 0)
-         - (parseFloat(rowData.deficit) || 0);
-    setF('receipt-weight-total',  wt.toFixed(2));
     setF('receipt-type',          rowData.type         || '');
     setF('receipt-office',        rowData.officeName || rowData.office || '');
     setF('receipt-loading',       rowData.loading      || '');
@@ -3007,9 +2968,8 @@ async function loadReceiptForEdit(receiptData) {
     setF('receipt-noloon',        rowData.noloon ? Money.fmt(rowData.noloon) : '');
     setF('receipt-office-amount', rowData.officeAmount ? Money.fmt(rowData.officeAmount) : '');
     setF('receipt-discount',      rowData.discount ? Money.fmt(rowData.discount) : '');
-    setF('receipt-army',          rowData.army ? Money.fmt(rowData.army) : '');
     setF('receipt-add',           rowData.add ? Money.fmt(rowData.add) : '');
-    setF('receipt-net',           Money.fmt(rowData.net || 0));
+    setF('receipt-net',           Money.fmt(calculateRowNet(rowData)));
 
     tr.dataset.calcAttached = '1';
     attachRowCalculation(tr);

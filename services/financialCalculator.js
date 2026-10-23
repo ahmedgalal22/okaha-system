@@ -7,26 +7,23 @@ import { Money } from '../money.js';
 
 /**
  * Calculates the net value of a single data row.
- * Formula: ((weight + weight2) - deficit) * noloon - (ohda + officeAmount + discount) + add
+ * Formula: (weight - deficit) * noloon - (ohda + officeAmount + discount) + add
  */
 export function calculateRowNet(row) {
   if (!row) return 0;
   if (row._type === 'separator' || row.type === 'separator' || row.row_type === 'separator') return 0;
 
   const weight       = Number(row.weight)       || 0;
-  const weight2      = Number(row.weight2)      || 0;
   const deficit      = Number(row.deficit)      || 0;
   const noloon       = Number(row.noloon)       || 0;
   const ohda         = Number(row.ohda)         || 0;
   const officeAmount = Number(row.officeAmount ?? row.office_amount ?? row.officeAmount) || 0;
   const discount     = Number(row.discount)     || 0;
   const add          = Number(row.add)          || 0;
-  const army         = Number(row.army)         || 0;
 
-  const net = ((weight + weight2) - deficit) * noloon
+  const net = (weight - deficit) * noloon
             - (ohda + officeAmount + discount)
-            + add
-            + army;
+            + add;
 
   return Money.round(net);
 }
