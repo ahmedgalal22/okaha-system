@@ -1107,6 +1107,15 @@ async function getClientBalance(client_id) {
     // entry.amount is already decimal (from decimalizeRecord)
     // convert back to cents for safe integer arithmetic
     const cents = Money.toCents(entry.amount);
+    if (entry.type === 'deposit') {
+      deposit_total += cents;
+      continue;
+    }
+    if (entry.type === 'withdraw') {
+      withdraw_total += cents;
+      continue;
+    }
+
     const isOfficeEntry = entry.entity_type === 'office'
       || entry.type === OFFICE_LEDGER_TYPES.DEPOSIT
       || entry.type === OFFICE_LEDGER_TYPES.WITHDRAW_AUTO;
@@ -1127,9 +1136,6 @@ async function getClientBalance(client_id) {
       withdraw_total += Math.abs(cents);
       continue;
     }
-
-    if (entry.type === 'deposit') deposit_total += cents;
-    if (entry.type === 'withdraw') withdraw_total += cents;
   }
 
   return {
@@ -1221,7 +1227,9 @@ async function createOfficeDeposit(username, data) {
     throw new Error('[FinancialService:createOfficeDeposit] date must be a valid ISO date string.');
   }
 
-  const note = 'إيداع مبلغ';
+  const note = typeof data.note === 'string' && data.note.trim()
+    ? data.note.trim()
+    : 'إيداع مبلغ';
 
   const referenceId = _uuid();
   const [entry] = await DB.transaction(async (tx) => {

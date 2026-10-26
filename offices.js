@@ -16,6 +16,7 @@ import { Money } from './money.js';
 const STORE = 'offices';
 const RECEIPTS_STORE = 'receipts';
 const BOLSA_STORE = 'bolsaForms';
+const BOLSA_PRINT_HEADER_IMAGE_PATH = 'assets/images/bolsa-print-header.png';
 
 const _hamolaCache = new Map();
 
@@ -562,6 +563,53 @@ async function adjustOfficeBalance(username, office_id, payload) {
   return FinancialService.createClientBalanceEntry(username, data);
 }
 
+async function updateOfficeBolsaManualPaid(username, office_id, form_id, paid_amount) {
+  _requireUsername(username, 'updateOfficeBolsaManualPaid');
+  if (!office_id) throw new Error('[OfficesService:updateOfficeBolsaManualPaid] office_id is required.');
+  if (!form_id) throw new Error('[OfficesService:updateOfficeBolsaManualPaid] form_id is required.');
+
+  const paidAmount = Number(paid_amount);
+  if (!Number.isFinite(paidAmount) || paidAmount < 0) {
+    throw new Error('[OfficesService:updateOfficeBolsaManualPaid] paid_amount must be a non-negative finite number.');
+  }
+  const paidCents = Money.toCents(paidAmount);
+
+  const office = await getOfficeById(office_id, username);
+  if (!office) throw new Error('[OfficesService] office not found.');
+
+  const officeId = String(office.id);
+  const officeName = String(office.name || '').trim().toLowerCase();
+
+  const updatedForm = await DB.transaction(async (tx) => {
+    const form = await tx.getById(BOLSA_STORE, String(form_id));
+    if (!form || form.deleted_at !== null) {
+      throw new Error('[OfficesService:updateOfficeBolsaManualPaid] Bolsa form not found.');
+    }
+    if (form.username !== username) {
+      throw new Error('[OfficesService:updateOfficeBolsaManualPaid] cross-user access is forbidden.');
+    }
+
+    if (!_buildOfficeBolsaFormCard(form, officeId, officeName)) {
+      throw new Error('[OfficesService:updateOfficeBolsaManualPaid] Bolsa form has no rows for this office.');
+    }
+
+    const existingPaidByOffice = form.manual_paid_by_office
+      && typeof form.manual_paid_by_office === 'object'
+      && !Array.isArray(form.manual_paid_by_office)
+      ? form.manual_paid_by_office
+      : {};
+
+    return tx.update(BOLSA_STORE, String(form.id), {
+      manual_paid_by_office: {
+        ...existingPaidByOffice,
+        [officeId]: Money.toDecimal(paidCents),
+      },
+    });
+  }, { username, stores: [BOLSA_STORE] });
+
+  return updatedForm;
+}
+
 const OfficesService = Object.freeze({
   createOffices,
   updateOffice,
@@ -575,6 +623,7 @@ const OfficesService = Object.freeze({
   getOfficeLedger,
   depositToOffice,
   adjustOfficeBalance,
+  updateOfficeBolsaManualPaid,
   _getCachedHamola,
 });
 
@@ -601,6 +650,8 @@ const OfficesModule = Object.freeze({
   getOfficeLedger: (office_id) => OfficesService.getOfficeLedger(_moduleSessionUsername(), office_id),
   adjustOfficeBalance: (office_id, payload) =>
     OfficesService.adjustOfficeBalance(_moduleSessionUsername(), office_id, payload),
+  updateOfficeBolsaManualPaid: (office_id, form_id, paid_amount) =>
+    OfficesService.updateOfficeBolsaManualPaid(_moduleSessionUsername(), office_id, form_id, paid_amount),
   depositToOffice: (office_id, payload) =>
     OfficesService.depositToOffice(_moduleSessionUsername(), office_id, payload),
   addHamolaRow: (office_id, row) =>
@@ -622,11 +673,15 @@ const OfficesModule = Object.freeze({
 let _searchQuery = '';
 let _editingOfficeId = null;
 let _editingOfficeDraft = null;
-let _activeDetailsTab = 'balance';
+let _activeDetailsTab = 'cards';
 let _detailsOfficeId = null;
 let _hamolaEditId = null;
-let _isOfficeDepositSaving = false;
+let _isOfficeBalanceSaving = false;
+let _officeBalanceActionType = 'deposit';
 const _officeBolsaActionInFlight = new Set();
+const _officeBolsaManualPaidSaveTimers = new Map();
+const _officeBolsaManualPaidSaveSequences = new Map();
+const _officeBolsaManualPaidSaveChains = new Map();
 const LAST_PAGE_CTX_KEY = 'financial_last_page_ctx';
 
 function _requireSession() {
@@ -821,9 +876,9 @@ function _renderDetailsShell(office) {
     document.body.appendChild(modal.firstElementChild);
   }
 
-  if (!document.getElementById('officeDepositModal')) {
+  if (!document.getElementById('officeBalanceModal')) {
     const modal = document.createElement('div');
-    modal.innerHTML = _renderOfficeDepositModal();
+    modal.innerHTML = _renderOfficeBalanceModal();
     document.body.appendChild(modal.firstElementChild);
   }
 }
@@ -869,26 +924,34 @@ function _renderHamolaModal() {
   `;
 }
 
-function _renderOfficeDepositModal() {
+function _renderOfficeBalanceModal() {
   return `
-    <div id="officeDepositModal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+    <div id="officeBalanceModal" class="hidden fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
       <div class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-bold">إيداع رصيد</h3>
-          <button type="button" data-action="office-deposit-close" class="btn btn-secondary btn-sm">إغلاق</button>
+          <h3 id="officeBalanceTitle" class="text-lg font-bold">إيداع</h3>
+          <button type="button" data-action="office-balance-close" class="btn btn-secondary btn-sm">إغلاق</button>
         </div>
 
         <div class="grid grid-cols-1 gap-3 mb-4">
           <div>
-            <label class="label mb-1" for="officeDepositAmount">المبلغ</label>
-            <input id="officeDepositAmount" type="number" step="0.01" min="0" class="input input-sm" />
+            <label class="label mb-1" for="officeBalanceAmount">المبلغ</label>
+            <input id="officeBalanceAmount" type="number" step="0.01" min="0.01" class="input input-sm" />
+          </div>
+          <div>
+            <label class="label mb-1" for="officeBalanceDate">التاريخ</label>
+            <input id="officeBalanceDate" type="date" class="input input-sm" />
+          </div>
+          <div>
+            <label class="label mb-1" for="officeBalanceNote">الملاحظة</label>
+            <input id="officeBalanceNote" type="text" class="input input-sm" />
           </div>
         </div>
 
         <div class="flex gap-2">
-          <button type="button" data-action="office-deposit-save" class="btn btn-primary btn-sm">حفظ</button>
+          <button type="button" data-action="office-balance-save" class="btn btn-primary btn-sm">حفظ</button>
         </div>
-        <div id="officeDepositMsg" class="field-msg-inline field-msg-inline--error" role="alert" aria-live="polite"></div>
+        <div id="officeBalanceMsg" class="field-msg-inline field-msg-inline--error" role="alert" aria-live="polite"></div>
       </div>
     </div>
   `;
@@ -939,7 +1002,7 @@ function _renderOfficeBalance(entries) {
         <td>${entryTypeLabel(entry)}</td>
         <td>${delta < 0 ? '-' : ''}${_fmt(Math.abs(delta))}</td>
         <td>${_fmt(balance)}</td>
-        <td>${_text(entry.reference_type === 'bolsa' ? (entry.note || entry.reference_id || '-') : entry.type === 'OFFICE_DEPOSIT' ? (entry.note || entry.reference_number || entry.reference_id || '-') : (entry.reference_number || entry.reference_id || '-'))}</td>
+        <td>${_text(entry.reference_type === 'bolsa' || entry.type === 'OFFICE_DEPOSIT' || entry.type === 'deposit' || entry.type === 'withdraw' ? (entry.note || entry.reference_number || entry.reference_id || '-') : (entry.reference_number || entry.reference_id || '-'))}</td>
       </tr>
     `).join('')
     : `<tr><td colspan="5" class="text-center text-muted p-4">لا توجد حركات</td></tr>`;
@@ -951,7 +1014,8 @@ function _renderOfficeBalance(entries) {
         <p class="text-2xl font-bold ${currentClass}">${_fmt(currentBalance)}</p>
       </div>
       <div class="flex gap-2">
-        <button type="button" data-action="office-deposit-open" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">💰 إيداع رصيد</button>
+        <button type="button" data-action="office-balance-open" data-entry-type="deposit" style="background:#2563eb;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">إيداع</button>
+        <button type="button" data-action="office-balance-open" data-entry-type="withdraw" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:8px 16px;font-weight:700;font-size:0.8125rem;cursor:pointer;font-family:inherit;">سحب</button>
       </div>
     </div>
     <div class="table-wrapper">
@@ -1126,6 +1190,7 @@ async function showOfficeDetails(id) {
   if (!id) throw new Error('[offices-page] office id is required');
 
   _detailsOfficeId = String(id);
+  _activeDetailsTab = 'cards';
   const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
   if (!office) throw new Error('Office not found');
 
@@ -1187,6 +1252,16 @@ function _getBolsaRowPricing(row) {
   return { weight, price, totalPrice };
 }
 
+function _getOfficeBolsaManualPaidCents(form, officeId) {
+  const paidByOffice = form?.manual_paid_by_office;
+  if (!paidByOffice || typeof paidByOffice !== 'object' || Array.isArray(paidByOffice)) {
+    return 0;
+  }
+
+  const paid = _optionalFiniteNumber(paidByOffice[String(officeId)]);
+  return paid === null || paid < 0 ? 0 : Money.toCents(paid);
+}
+
 function _buildOfficeBolsaFormCard(form, officeId, officeName) {
   if (!form || form.id === null || form.id === undefined) return null;
 
@@ -1234,8 +1309,11 @@ function _buildOfficeBolsaFormCard(form, officeId, officeName) {
 
   if (displayedRows.length === 0) return null;
 
+  const manualPaidCents = _getOfficeBolsaManualPaidCents(form, officeId);
+
   return {
     id: String(form.id),
+    office_id: String(officeId),
     bolsa_date: form.bolsa_date || '',
     rows: displayedRows,
     is_shared: isShared,
@@ -1243,6 +1321,10 @@ function _buildOfficeBolsaFormCard(form, officeId, officeName) {
       row_count: displayedRows.length,
       weight: Money.toDecimal(weightCents),
       total_price: hasMissingTotalPrice ? null : Money.toDecimal(totalPriceCents),
+      manual_paid: Money.toDecimal(manualPaidCents),
+      remaining_amount: hasMissingTotalPrice
+        ? null
+        : Money.toDecimal(totalPriceCents - manualPaidCents),
     },
   };
 }
@@ -1331,6 +1413,28 @@ function _renderOfficeBolsaFormCards(cards) {
             <span>إجمالي السعر الكلي</span>
             <strong>${card.totals.total_price === null ? '—' : _fmt(card.totals.total_price)}</strong>
           </div>
+          <div class="office-bolsa-manual-paid">
+            <label for="manual-paid-${_escHtml(card.office_id)}-${_escHtml(card.id)}">المدفوع</label>
+            <input
+              id="manual-paid-${_escHtml(card.office_id)}-${_escHtml(card.id)}"
+              class="office-bolsa-manual-paid-input"
+              type="number"
+              min="0"
+              step="0.01"
+              inputmode="decimal"
+              placeholder="0.00"
+              value="${card.totals.manual_paid ? _fmt(card.totals.manual_paid) : ''}"
+              data-form-id="${_escHtml(card.id)}"
+              data-office-id="${_escHtml(card.office_id)}"
+              data-total-price-cents="${card.totals.total_price === null ? '' : Money.toCents(card.totals.total_price)}"
+              aria-describedby="manual-paid-msg-${_escHtml(card.office_id)}-${_escHtml(card.id)}"
+            />
+            <span id="manual-paid-msg-${_escHtml(card.office_id)}-${_escHtml(card.id)}" class="office-bolsa-manual-paid-message" role="alert" aria-live="polite"></span>
+          </div>
+          <div>
+            <span>المتبقي</span>
+            <strong class="office-bolsa-remaining-amount">${card.totals.remaining_amount === null ? '—' : _fmt(card.totals.remaining_amount)}</strong>
+          </div>
         </div>
       </article>`;
   }).join('');
@@ -1345,6 +1449,196 @@ function _renderOfficeBolsaFormCards(cards) {
 function _renderOfficeCards(bolsaFormCards = []) {
   return _renderOfficeBolsaFormCards(bolsaFormCards)
     || '<div style="text-align:center;padding:32px;color:#94a3b8;">لا توجد كارتات لهذا العميل</div>';
+}
+
+function _parseOfficeBolsaManualPaidInput(rawValue) {
+  const raw = String(rawValue ?? '').trim();
+  if (raw === '') return 0;
+
+  const amount = Number(raw);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return Money.toCents(amount);
+}
+
+function _getOfficeBolsaManualPaidSaveKey(officeId, formId) {
+  return `${String(officeId || '')}::${String(formId || '')}`;
+}
+
+function _enqueueOfficeBolsaManualPaidSave(input, officeId, formId, paidCents, sequence) {
+  const key = _getOfficeBolsaManualPaidSaveKey(officeId, formId);
+  const previousSave = _officeBolsaManualPaidSaveChains.get(key) || Promise.resolve();
+
+  const save = previousSave
+    .catch(() => {})
+    .then(async () => {
+      // A newer input (or an invalid input) supersedes saves that have not
+      // started yet. Saves already running finish first because this task is
+      // chained behind them, so the newest value is always written last.
+      if (_officeBolsaManualPaidSaveSequences.get(key) !== sequence) return;
+
+      await OfficesModule.updateOfficeBolsaManualPaid(
+        officeId,
+        formId,
+        Money.toDecimal(paidCents),
+      );
+    });
+
+  const chainTail = save.catch(() => {});
+  _officeBolsaManualPaidSaveChains.set(key, chainTail);
+  void chainTail.then(() => {
+    if (_officeBolsaManualPaidSaveChains.get(key) === chainTail) {
+      _officeBolsaManualPaidSaveChains.delete(key);
+    }
+  });
+
+  save.catch((err) => {
+    if (_officeBolsaManualPaidSaveSequences.get(key) !== sequence || !input.isConnected) return;
+    const card = input.closest('.bolsa-record');
+    const message = card?.querySelector('.office-bolsa-manual-paid-message');
+    input.setAttribute('aria-invalid', 'true');
+    if (message) message.textContent = err?.message || 'تعذر حفظ المدفوع';
+  });
+
+  return save;
+}
+
+function _scheduleOfficeBolsaManualPaidSave(input, paidCents, immediate = false) {
+  const formId = String(input.dataset.formId || '');
+  const officeId = String(input.dataset.officeId || '');
+  if (!formId || !officeId) return undefined;
+
+  const key = _getOfficeBolsaManualPaidSaveKey(officeId, formId);
+  const sequence = (_officeBolsaManualPaidSaveSequences.get(key) || 0) + 1;
+  _officeBolsaManualPaidSaveSequences.set(key, sequence);
+
+  const existingTimer = _officeBolsaManualPaidSaveTimers.get(key);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    _officeBolsaManualPaidSaveTimers.delete(key);
+  }
+
+  if (immediate) {
+    return _enqueueOfficeBolsaManualPaidSave(input, officeId, formId, paidCents, sequence);
+  }
+
+  const timer = setTimeout(() => {
+    _officeBolsaManualPaidSaveTimers.delete(key);
+    void _enqueueOfficeBolsaManualPaidSave(input, officeId, formId, paidCents, sequence);
+  }, 250);
+  _officeBolsaManualPaidSaveTimers.set(key, timer);
+  return undefined;
+}
+
+function _handleOfficeBolsaManualPaidInput(input, immediate = false) {
+  const card = input.closest('.bolsa-record');
+  const remainingEl = card?.querySelector('.office-bolsa-remaining-amount');
+  const message = card?.querySelector('.office-bolsa-manual-paid-message');
+  const paidCents = _parseOfficeBolsaManualPaidInput(input.value);
+
+  if (paidCents === null) {
+    const key = _getOfficeBolsaManualPaidSaveKey(input.dataset.officeId, input.dataset.formId);
+    const pendingTimer = _officeBolsaManualPaidSaveTimers.get(key);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      _officeBolsaManualPaidSaveTimers.delete(key);
+    }
+    _officeBolsaManualPaidSaveSequences.set(
+      key,
+      (_officeBolsaManualPaidSaveSequences.get(key) || 0) + 1,
+    );
+    input.setAttribute('aria-invalid', 'true');
+    if (message) message.textContent = 'أدخل مبلغًا صحيحًا غير سالب';
+    return;
+  }
+
+  input.removeAttribute('aria-invalid');
+  if (message) message.textContent = '';
+
+  const totalPriceCentsRaw = input.dataset.totalPriceCents;
+  if (remainingEl) {
+    if (totalPriceCentsRaw === '' || totalPriceCentsRaw == null) {
+      remainingEl.textContent = '—';
+    } else {
+      const totalPriceCents = Number(totalPriceCentsRaw);
+      remainingEl.textContent = Number.isFinite(totalPriceCents)
+        ? _fmt(Money.toDecimal(totalPriceCents - paidCents))
+        : '—';
+    }
+  }
+
+  _scheduleOfficeBolsaManualPaidSave(input, paidCents, immediate);
+}
+
+async function _flushOfficeBolsaManualPaidBeforePrint(officeId, formId) {
+  const normalizedOfficeId = String(officeId || '');
+  const normalizedFormId = String(formId || '');
+  const key = _getOfficeBolsaManualPaidSaveKey(normalizedOfficeId, normalizedFormId);
+  const input = [...document.querySelectorAll('.office-bolsa-manual-paid-input')]
+    .find((candidate) => (
+      String(candidate.dataset.officeId || '') === normalizedOfficeId
+      && String(candidate.dataset.formId || '') === normalizedFormId
+    ));
+
+  if (!input) {
+    const pendingSave = _officeBolsaManualPaidSaveChains.get(key);
+    if (pendingSave) await pendingSave;
+    return;
+  }
+
+  const paidCents = _parseOfficeBolsaManualPaidInput(input.value);
+  if (paidCents === null) {
+    _handleOfficeBolsaManualPaidInput(input);
+    throw new Error('أدخل مبلغًا صحيحًا غير سالب في حقل المدفوع قبل الطباعة.');
+  }
+
+  const hasPendingTimer = _officeBolsaManualPaidSaveTimers.has(key);
+  const hasPendingSave = _officeBolsaManualPaidSaveChains.has(key);
+  let saveRequired = true;
+  if (!hasPendingTimer && !hasPendingSave) {
+    const form = await DB.getById(BOLSA_STORE, normalizedFormId);
+    saveRequired = !form
+      || _getOfficeBolsaManualPaidCents(form, normalizedOfficeId) !== paidCents;
+  }
+
+  if (saveRequired) {
+    try {
+      await _scheduleOfficeBolsaManualPaidSave(input, paidCents, true);
+    } catch (_) {
+      throw new Error('تعذر حفظ مبلغ المدفوع قبل الطباعة، لذلك تم إلغاء الطباعة.');
+    }
+  }
+
+  if (!input.isConnected) return;
+
+  const latestPaidCents = _parseOfficeBolsaManualPaidInput(input.value);
+  if (latestPaidCents === null) {
+    _handleOfficeBolsaManualPaidInput(input);
+    throw new Error('أدخل مبلغًا صحيحًا غير سالب في حقل المدفوع قبل الطباعة.');
+  }
+  if (latestPaidCents !== paidCents || _officeBolsaManualPaidSaveTimers.has(key)) {
+    await _flushOfficeBolsaManualPaidBeforePrint(normalizedOfficeId, normalizedFormId);
+    return;
+  }
+
+  let pendingChain = _officeBolsaManualPaidSaveChains.get(key);
+  while (pendingChain) {
+    await pendingChain;
+    if (!input.isConnected) return;
+
+    const afterChainPaidCents = _parseOfficeBolsaManualPaidInput(input.value);
+    if (afterChainPaidCents === null) {
+      _handleOfficeBolsaManualPaidInput(input);
+      throw new Error('أدخل مبلغًا صحيحًا غير سالب في حقل المدفوع قبل الطباعة.');
+    }
+    if (afterChainPaidCents !== paidCents || _officeBolsaManualPaidSaveTimers.has(key)) {
+      await _flushOfficeBolsaManualPaidBeforePrint(normalizedOfficeId, normalizedFormId);
+      return;
+    }
+
+    const nextPendingChain = _officeBolsaManualPaidSaveChains.get(key);
+    if (!nextPendingChain || nextPendingChain === pendingChain) break;
+    pendingChain = nextPendingChain;
+  }
 }
 
 async function _refreshOfficeBolsaCards() {
@@ -1427,6 +1721,14 @@ function _buildOfficeBolsaPrintBody(card, office, esc) {
       label: 'إجمالي السعر الكلي',
       value: card.totals.total_price === null ? '—' : _fmt(card.totals.total_price),
     },
+    {
+      label: 'المدفوع',
+      value: _fmt(card.totals.manual_paid),
+    },
+    {
+      label: 'المتبقي',
+      value: card.totals.remaining_amount === null ? '—' : _fmt(card.totals.remaining_amount),
+    },
   ];
   const totalsHeaders = totals
     .map((total) => `<th scope="col">${esc(total.label)}</th>`)
@@ -1436,21 +1738,30 @@ function _buildOfficeBolsaPrintBody(card, office, esc) {
     .join('');
 
   return `
-    <div class="print-header">
-      <h2>تسجيل البوالص</h2>
-      <div class="print-header-info">
-        <span>التاريخ: <strong>${esc(card.bolsa_date || '—')}</strong></span>
-        <span>العميل: <strong>${esc(office?.name || '')}</strong></span>
+    <div class="office-bolsa-print">
+      <div class="bolsa-print-header-image-wrap">
+        <img
+          class="bolsa-print-header-image"
+          src="${BOLSA_PRINT_HEADER_IMAGE_PATH}"
+          alt=""
+          onerror="this.parentElement.style.display='none'"
+        />
       </div>
-    </div>
-    <table class="bolsa-print-items-table">
-      <thead><tr>${headers}</tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <table class="bolsa-print-totals-table" aria-label="إجماليات نموذج البوالص">
-      <thead><tr>${totalsHeaders}</tr></thead>
-      <tbody><tr>${totalsValues}</tr></tbody>
-    </table>`;
+      <div class="print-header">
+        <div class="print-header-info">
+          <span>التاريخ: <strong>${esc(card.bolsa_date || '—')}</strong></span>
+          <span>العميل: <strong>${esc(office?.name || '')}</strong></span>
+        </div>
+      </div>
+      <table class="bolsa-print-items-table">
+        <thead><tr>${headers}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <table class="bolsa-print-totals-table" aria-label="إجماليات نموذج البوالص">
+        <thead><tr>${totalsHeaders}</tr></thead>
+        <tbody><tr>${totalsValues}</tr></tbody>
+      </table>
+    </div>`;
 }
 
 async function _printOfficeBolsaForm(formId) {
@@ -1459,6 +1770,8 @@ async function _printOfficeBolsaForm(formId) {
     ? await OfficesModule.getOfficeDetails(_detailsOfficeId)
     : null;
   if (!office) throw new Error('تعذر العثور على العميل الحالي لطباعة النموذج.');
+
+  await _flushOfficeBolsaManualPaidBeforePrint(String(office.id), String(formId));
 
   const form = await FinancialService.getBolsaForm(username, formId);
   if (!form) {
@@ -1476,33 +1789,80 @@ async function _printOfficeBolsaForm(formId) {
   const { printHTML, buildPrintDocument, _escPrint } = await import('./printEngine.js');
   const body = _buildOfficeBolsaPrintBody(card, office, _escPrint);
   printHTML(buildPrintDocument({
-    title: `تسجيل البوالص — ${card.bolsa_date || ''}`,
+    title: `نموذج البوالص — ${card.bolsa_date || ''}`,
     body,
     orientation: 'landscape',
     extraCSS: `
-      .bolsa-print-totals-table {
+      .office-bolsa-print {
+        width: 100%;
+      }
+      .office-bolsa-print .bolsa-print-header-image-wrap {
+        margin: 0 auto 6px;
+        text-align: center;
+        line-height: 0;
+      }
+      .office-bolsa-print .bolsa-print-header-image {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        max-height: 28mm;
+        object-fit: contain;
+        margin: 0 auto;
+      }
+      .office-bolsa-print .print-header {
+        margin-bottom: 8px;
+        padding-bottom: 6px;
+      }
+      .office-bolsa-print .print-header-info {
+        margin-top: 0;
+        font-size: 11pt;
+      }
+      .office-bolsa-print .bolsa-print-items-table {
+        width: 100%;
+        table-layout: auto;
+      }
+      .office-bolsa-print .bolsa-print-items-table thead {
+        display: table-header-group;
+      }
+      .office-bolsa-print .bolsa-print-items-table th {
+        padding: 6px 5px;
+        font-size: 10.5pt;
+        line-height: 1.3;
+      }
+      .office-bolsa-print .bolsa-print-items-table td {
+        padding: 5px;
+        font-size: 10.5pt;
+        line-height: 1.35;
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: break-word;
+      }
+      .office-bolsa-print .bolsa-print-totals-table {
         margin-top: 10px;
         table-layout: fixed;
         page-break-inside: avoid;
         break-inside: avoid;
       }
-      .bolsa-print-totals-table th {
-        background: #fff;
-        color: #000;
-        padding: 5px 8px;
-        border: 1.5px solid #000;
-        text-align: center;
-        font-size: 8pt;
-        font-weight: 700;
-      }
-      .bolsa-print-totals-table td {
+      .office-bolsa-print .bolsa-print-totals-table th {
         background: #fff;
         color: #000;
         padding: 6px 8px;
         border: 1.5px solid #000;
         text-align: center;
-        font-size: 12pt;
+        font-size: 10pt;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+      .office-bolsa-print .bolsa-print-totals-table td {
+        background: #fff;
+        color: #000;
+        padding: 7px 8px;
+        border: 1.5px solid #000;
+        text-align: center;
+        font-size: 14pt;
         font-weight: 800;
+        line-height: 1.25;
+        font-variant-numeric: tabular-nums;
       }
     `,
   }), { id: 'office-bolsa-card-print-iframe' });
@@ -1599,70 +1959,87 @@ function _closeHamolaModal() {
   document.getElementById('hamolaModal')?.classList.add('hidden');
 }
 
-function _openOfficeDepositModal() {
-  const modal = document.getElementById('officeDepositModal');
-  const msg = document.getElementById('officeDepositMsg');
+function _openOfficeBalanceModal(type) {
+  _officeBalanceActionType = type === 'withdraw' ? 'withdraw' : 'deposit';
+
+  const modal = document.getElementById('officeBalanceModal');
+  const msg = document.getElementById('officeBalanceMsg');
   if (msg) { msg.textContent = ''; msg.classList.remove('is-visible'); }
-  const amountEl = document.getElementById('officeDepositAmount');
+
+  const title = document.getElementById('officeBalanceTitle');
+  if (title) title.textContent = _officeBalanceActionType === 'withdraw' ? 'سحب' : 'إيداع';
+
+  const amountEl = document.getElementById('officeBalanceAmount');
   if (amountEl) amountEl.value = '';
-  const saveBtn = document.querySelector('[data-action="office-deposit-save"]');
-  if (saveBtn) saveBtn.disabled = _isOfficeDepositSaving;
+  const dateEl = document.getElementById('officeBalanceDate');
+  if (dateEl) dateEl.value = new Date().toISOString().split('T')[0];
+  const noteEl = document.getElementById('officeBalanceNote');
+  if (noteEl) noteEl.value = '';
+
+  const saveBtn = document.querySelector('[data-action="office-balance-save"]');
+  if (saveBtn) saveBtn.disabled = _isOfficeBalanceSaving;
   modal?.classList.remove('hidden');
 }
 
-function _closeOfficeDepositModal() {
-  document.getElementById('officeDepositModal')?.classList.add('hidden');
+function _closeOfficeBalanceModal() {
+  document.getElementById('officeBalanceModal')?.classList.add('hidden');
 }
 
-async function _saveOfficeDeposit() {
-  if (_isOfficeDepositSaving) return;
+async function _saveOfficeBalance() {
+  if (_isOfficeBalanceSaving) return;
 
-  const msg = document.getElementById('officeDepositMsg');
+  const msg = document.getElementById('officeBalanceMsg');
   if (msg) { msg.textContent = ''; msg.classList.remove('is-visible'); }
 
-  const amountVal = parseFloat(document.getElementById('officeDepositAmount')?.value) || 0;
+  const showError = (text) => {
+    if (msg) {
+      msg.textContent = text;
+      msg.classList.add('is-visible');
+    }
+  };
 
   if (!_detailsOfficeId) {
-    if (msg) {
-      msg.textContent = 'لا يوجد عميل محدد';
-      msg.classList.add('is-visible');
-    }
+    showError('لا يوجد عميل محدد');
     return;
   }
 
-  if (Money.toCents(amountVal) <= 0) {
-    if (msg) {
-      msg.textContent = 'المبلغ مطلوب ويجب أن يكون أكبر من صفر';
-      msg.classList.add('is-visible');
-    }
+  const amountRaw = document.getElementById('officeBalanceAmount')?.value ?? '';
+  const amount = Number(amountRaw);
+  if (String(amountRaw).trim() === '' || !Number.isFinite(amount) || Money.toCents(amount) <= 0) {
+    showError('المبلغ مطلوب ويجب أن يكون أكبر من صفر');
     return;
   }
 
-  const saveBtn = document.querySelector('[data-action="office-deposit-save"]');
-  _isOfficeDepositSaving = true;
+  const date = document.getElementById('officeBalanceDate')?.value || '';
+  if (!date || Number.isNaN(Date.parse(date))) {
+    showError('التاريخ مطلوب ويجب أن يكون صحيحًا');
+    return;
+  }
+
+  const note = document.getElementById('officeBalanceNote')?.value?.trim() || '';
+  const saveBtn = document.querySelector('[data-action="office-balance-save"]');
+  _isOfficeBalanceSaving = true;
   if (saveBtn) saveBtn.disabled = true;
 
   try {
-    if (typeof OfficesModule.depositToOffice !== 'function') {
-      throw new Error('Office deposit handler is not available');
+    if (typeof OfficesModule.adjustOfficeBalance !== 'function') {
+      throw new Error('Office balance handler is not available');
     }
 
-    await OfficesModule.depositToOffice(_detailsOfficeId, {
-      amount: amountVal,
-      note: 'إيداع مبلغ',
-      date: new Date().toISOString().split('T')[0],
+    await OfficesModule.adjustOfficeBalance(_detailsOfficeId, {
+      type: _officeBalanceActionType,
+      amount,
+      date,
+      note,
     });
 
-    _closeOfficeDepositModal();
+    _closeOfficeBalanceModal();
     const office = await OfficesModule.getOfficeDetails(_detailsOfficeId);
     await _renderDetailsContent(office);
   } catch (err) {
-    if (msg) {
-      msg.textContent = err.message || 'حدث خطأ أثناء الإيداع';
-      msg.classList.add('is-visible');
-    }
+    showError(err.message || 'حدث خطأ أثناء حفظ الحركة');
   } finally {
-    _isOfficeDepositSaving = false;
+    _isOfficeBalanceSaving = false;
     if (saveBtn) saveBtn.disabled = false;
   }
 }
@@ -1797,24 +2174,25 @@ function attachOfficesPageListeners() {
     }
 
     if (target.closest('[data-action="office-back"]')) {
-      _activeDetailsTab = 'balance';
+      _activeDetailsTab = 'cards';
       _detailsOfficeId = null;
       if (typeof window.showPage === 'function') await window.showPage('officesPage');
       return;
     }
 
-    if (target.closest('[data-action="office-deposit-open"]')) {
-      _openOfficeDepositModal();
+    const officeBalanceOpenBtn = target.closest('[data-action="office-balance-open"]');
+    if (officeBalanceOpenBtn) {
+      _openOfficeBalanceModal(officeBalanceOpenBtn.dataset.entryType);
       return;
     }
 
-    if (target.closest('[data-action="office-deposit-close"]')) {
-      _closeOfficeDepositModal();
+    if (target.closest('[data-action="office-balance-close"]')) {
+      _closeOfficeBalanceModal();
       return;
     }
 
-    if (target.closest('[data-action="office-deposit-save"]')) {
-      await _saveOfficeDeposit();
+    if (target.closest('[data-action="office-balance-save"]')) {
+      await _saveOfficeBalance();
       return;
     }
 
@@ -1919,9 +2297,20 @@ function attachOfficesPageListeners() {
 
   document.addEventListener('input', async (e) => {
     const target = e.target;
+    if (target?.classList?.contains('office-bolsa-manual-paid-input')) {
+      _handleOfficeBolsaManualPaidInput(target);
+      return;
+    }
     if (target?.id === 'officeSearch') {
       _searchQuery = target.value || '';
       await loadOffices();
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    const target = e.target;
+    if (target?.classList?.contains('office-bolsa-manual-paid-input')) {
+      _handleOfficeBolsaManualPaidInput(target, true);
     }
   });
 

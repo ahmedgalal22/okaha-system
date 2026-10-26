@@ -2474,6 +2474,44 @@ input[type="number"] {
   unicode-bidi: embed;
 }
 
+.bolsa-record .office-bolsa-manual-paid label {
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.bolsa-record .office-bolsa-manual-paid-input {
+  width: min(170px, 100%);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  color: #1e40af;
+  text-align: center;
+  direction: ltr;
+  font-variant-numeric: tabular-nums;
+  background: #fff;
+}
+
+.bolsa-record .office-bolsa-manual-paid-input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.bolsa-record .office-bolsa-manual-paid-input[aria-invalid="true"] {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+}
+
+.bolsa-record .office-bolsa-manual-paid-message {
+  min-height: 1em;
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  color: #dc2626;
+}
+
 /* ─────────────────────────────────────────
    SR-ONLY (accessibility)
    ───────────────────────────────────────── */
