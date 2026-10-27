@@ -19,6 +19,7 @@ const STATE = {
   tab: 'receipts',
   ready: false,
   loading: false,
+  reloadPending: false,
   receipts: [],
   filters: {
     receipts: createFilterState(),
@@ -392,8 +393,6 @@ function renderShell() {
       <div class="all-receipts-card">
 
         <div class="all-receipts-header">
-          <h2 class="all-receipts-title">جميع نماذج الصرف</h2>
-          <p class="all-receipts-subtitle">عرض مركزي للكارتات مع التصفية والطباعة والتعديل الآمن.</p>
           <div class="all-receipts-tabs no-print" role="tablist" aria-label="جميع النماذج">
             <button type="button" class="all-tab" data-tab="receipts">📋 الكارتات</button>
           </div>
@@ -684,7 +683,12 @@ function setDatalist(id, values) {
 async function loadAllReceiptsData() {
   const username = getSessionUsername();
   if (!username) return;
-  if (STATE.loading) return;
+  if (STATE.loading) {
+    // A reload requested while a load is in flight must not be dropped:
+    // the in-flight read may predate the newest save. Re-run once it settles.
+    STATE.reloadPending = true;
+    return;
+  }
   STATE.loading = true;
   try {
     const receipts = await ReceiptsModule.getAll(username);
@@ -702,6 +706,10 @@ async function loadAllReceiptsData() {
     }
   } finally {
     STATE.loading = false;
+    if (STATE.reloadPending) {
+      STATE.reloadPending = false;
+      await loadAllReceiptsData();
+    }
   }
 }
 
@@ -830,9 +838,6 @@ function buildReceiptPrintBlock(record) {
   const thead      = _bulkReceiptBuildTableHead(activeCols);
   const tbody      = _bulkReceiptBuildTableBody(allRows, activeCols);
 
-  const payoutStatus = String(record.payout_status || 'unpaid');
-  const statusLabel  = payoutStatus === 'paid' ? 'تم صرفه' : 'لم يتم الصرف';
-
   return `
     <section class="print-card">
       <header>
@@ -843,7 +848,6 @@ function buildReceiptPrintBlock(record) {
       <div class="print-meta">
         ${esc(record.owner_name || record.client_name || '')}
         ${record.company_name ? ' · ' + esc(record.company_name) : ''}
-        · ${esc(statusLabel)}
       </div>
       <table>
         ${thead}
@@ -1124,7 +1128,6 @@ function _receiptPrintBuildTotalsRow(record, kartaCount) {
  *   - Header image (wasel.png) — absolute URL built from window.location, no DOM read.
  *   - Title, receipt number, date.
  *   - Owner name, recipient name.
- *   - Payout status badge.
  *   - Optional shipping number and notes.
  */
 function _receiptPrintBuildHeader(record) {
@@ -1133,9 +1136,6 @@ function _receiptPrintBuildHeader(record) {
   const dayName       = esc(receiptDayName(record.receipt_date));
   const ownerName     = esc(record.owner_name || record.client_name || '—');
   const recipientName = esc(record.recipient_name || '—');
-  const payoutStatus  = String(record.payout_status || 'unpaid');
-  const statusLabel   = payoutStatus === 'paid' ? '✅ تم صرفه' : '⏳ لم يتم الصرف';
-  const statusColor   = payoutStatus === 'paid' ? '#059669'   : '#dc2626';
   const companyName   = record.company_name ? esc(record.company_name) : '';
   const shipping      = record.shipping_number
     ? `<span>رقم الإرسال: <strong>${esc(record.shipping_number)}</strong></span>`
@@ -1167,7 +1167,6 @@ function _receiptPrintBuildHeader(record) {
         <span>إذن الصرف: <strong>${receiptNumber}</strong></span>
         <span>التاريخ: <strong>${receiptDate} — ${dayName}</strong></span>
         ${shipping}
-        <span style="color:${statusColor};font-weight:800;">${statusLabel}</span>
       </div>
       <div class="print-header-info" style="margin-top:4px;">
         <span>صاحب المركبة: <strong>${ownerName}</strong></span>
@@ -1564,7 +1563,13 @@ function _scheduleAllReceiptsRefresh() {
 async function initAllReceiptsPage() {
   const page = getPage();
   if (!page) return;
-  if (page.dataset.initialized === '1') return;
+  if (page.dataset.initialized === '1') {
+    // Revisit (app.js calls init on every navigation): refresh from the DB
+    // through the existing coalesced scheduler so newly saved receipts show
+    // without a browser reload. Listeners stay registered exactly once below.
+    _scheduleAllReceiptsRefresh();
+    return;
+  }
   page.dataset.initialized = '1';
   renderShell();
   bindPageEvents();
