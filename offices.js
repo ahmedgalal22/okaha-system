@@ -328,13 +328,15 @@ function _calcWeight(row) {
 function _calcReceiptNet(row) {
   const w1 = Number(row.weight) || 0;
   const w2 = Number(row.weight2) || 0;
+  // deficit is stored raw; /1000 applies at calculation time only (matches financialCalculator).
   const d = Number(row.deficit) || 0;
   const n = Number(row.noloon) || 0;
   const ohda = Number(row.ohda) || 0;
   const officeAmount = Number(row.officeAmount) || 0;
   const discount = Number(row.discount) || 0;
+  const army = Number(row.army) || 0;
   const add = Number(row.add) || 0;
-  return ((w1 + w2) - d) * n - (ohda + officeAmount + discount) + add;
+  return ((w1 + w2) - d / 1000) * n - (ohda + officeAmount + discount + army) + add;
 }
 
 function _calcBolsaNet(row) {

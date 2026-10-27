@@ -253,7 +253,7 @@ function sumVisibleRowWeight(rows) {
       if (row.weight_total != null && row.weight_total !== '') {
         return sum + toNumber(row.weight_total);
       }
-      return sum + toNumber(row.weight) + toNumber(row.weight2) - toNumber(row.deficit);
+      return sum + toNumber(row.weight) + toNumber(row.weight2) - toNumber(row.deficit) / 1000;
     }, 0);
 }
 
@@ -896,7 +896,7 @@ const _RECEIPT_PRINT_COLS = Object.freeze([
   { key: 'date',         label: 'التاريخ',       type: 'text',   printHide: false, conditional: false },
   { key: 'data',         label: 'اسم السائق',    type: 'text',   printHide: false, conditional: false },
   { key: 'car',          label: 'رقم المركبة',   type: 'text',   printHide: false, conditional: false },
-  { key: 'weight',       label: 'وزن وش',        type: 'number', printHide: false, conditional: true  },
+  { key: 'weight',       label: 'الوزن',         type: 'number', printHide: false, conditional: true  },
   { key: 'deficit',      label: 'عجز',           type: 'number', printHide: false, conditional: false },
   { key: 'loading',      label: 'التحميل',       type: 'text',   printHide: false, conditional: false },
   { key: 'taktik',       label: 'الجهة',         type: 'text',   printHide: false, conditional: false },
@@ -905,6 +905,7 @@ const _RECEIPT_PRINT_COLS = Object.freeze([
   { key: 'ohda',         label: 'عهدة',          type: 'number', printHide: false, conditional: false },
   { key: 'officeAmount', label: 'مكتب',          type: 'number', printHide: false, conditional: false },
   { key: 'add',          label: 'إضافة',         type: 'number', printHide: false, conditional: true  },
+  { key: 'army',         label: 'جيش',           type: 'number', printHide: false, conditional: true  },
   { key: 'net',          label: 'الصافي',        type: 'number', printHide: false, conditional: false },
 ]);
 
@@ -952,6 +953,8 @@ function _receiptPrintGetCellValue(row, colKey) {
       return row.officeAmount ?? '';
     case 'add':
       return row.add ?? '';
+    case 'army':
+      return row.army ?? '';
     case 'net':
       return row.net ?? '';
     default:

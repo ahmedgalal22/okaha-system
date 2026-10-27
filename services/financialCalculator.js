@@ -7,7 +7,10 @@ import { Money } from '../money.js';
 
 /**
  * Calculates the net value of a single data row.
- * Formula: (weight - deficit) * noloon - (ohda + officeAmount + discount) + add
+ * Formula: (weight - deficit / 1000) * noloon - (ohda + officeAmount + discount + army) + add
+ *
+ * `row.deficit` is the raw user-entered value (stored/displayed as entered);
+ * the /1000 conversion is applied here, at calculation time only.
  */
 export function calculateRowNet(row) {
   if (!row) return 0;
@@ -19,10 +22,11 @@ export function calculateRowNet(row) {
   const ohda         = Number(row.ohda)         || 0;
   const officeAmount = Number(row.officeAmount ?? row.office_amount ?? row.officeAmount) || 0;
   const discount     = Number(row.discount)     || 0;
+  const army         = Number(row.army)         || 0;
   const add          = Number(row.add)          || 0;
 
-  const net = (weight - deficit) * noloon
-            - (ohda + officeAmount + discount)
+  const net = (weight - deficit / 1000) * noloon
+            - (ohda + officeAmount + discount + army)
             + add;
 
   return Money.round(net);
