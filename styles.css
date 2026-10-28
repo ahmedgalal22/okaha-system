@@ -2904,3 +2904,112 @@ input[type="number"] {
   .ent-details-header { gap: 10px; }
   .ent-details-name { font-size: 1.25rem; text-align: right; flex-basis: 100%; order: -1; }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   Vehicle Owner / Broker Details — navy & teal identity
+   Scoped to #ownerDetailsPage only. The mandoub details page
+   (#agentDetailsPage) and all shared components are untouched.
+   ══════════════════════════════════════════════════════════════ */
+#ownerDetailsPage {
+  --owner-navy-900: #0b2447;
+  --owner-navy-700: var(--color-blue-darker);
+  --owner-teal-700: var(--color-teal);
+  --owner-teal-500: #14b8a6;
+}
+
+/* ── Identity header band ── */
+#ownerDetailsPage .ent-details-header {
+  background: linear-gradient(135deg, var(--owner-navy-900) 0%, var(--owner-navy-700) 58%, var(--owner-teal-700) 135%);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  padding: 20px 22px;
+}
+
+#ownerDetailsPage .ent-details-name {
+  color: #fff;
+}
+
+#ownerDetailsPage .ent-details-type {
+  background: rgba(20, 184, 166, 0.18);
+  border: 1px solid rgba(94, 234, 212, 0.55);
+  border-radius: var(--radius-full);
+  color: #ccfbf1;
+  font-weight: 700;
+  padding: 4px 14px;
+}
+
+#ownerDetailsPage .ent-btn-back {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: #fff;
+}
+#ownerDetailsPage .ent-btn-back:hover { background: rgba(255, 255, 255, 0.24); }
+#ownerDetailsPage .ent-btn-back:focus-visible {
+  outline: 2px solid var(--owner-teal-500);
+  outline-offset: 2px;
+}
+
+/* ── Balance card integration (values & buttons unchanged) ── */
+#ownerDetailsPage .stat-grid .card {
+  border: 1px solid var(--color-border-light);
+  border-top: 4px solid var(--owner-teal-500);
+}
+
+/* ── Tabs: الحركات (navy) / المركبات والسائقين (teal) ── */
+#ownerDetailsPage .owner-tabs {
+  display: flex;
+  gap: 8px;
+  background: #edf2f7;
+  border: 1px solid var(--color-border-light);
+  border-radius: 14px;
+  padding: 6px;
+  margin-bottom: 20px;
+}
+
+#ownerDetailsPage .owner-tab {
+  flex: 1;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+#ownerDetailsPage .owner-tab--ledger { color: var(--owner-navy-700); }
+#ownerDetailsPage .owner-tab--ledger:hover { background: rgba(30, 58, 138, 0.08); }
+#ownerDetailsPage .owner-tab--ledger.is-active {
+  background: linear-gradient(135deg, var(--owner-navy-900), var(--owner-navy-700));
+  color: #fff;
+  box-shadow: var(--shadow-md);
+}
+#ownerDetailsPage .owner-tab--ledger:focus-visible {
+  outline: 2px solid var(--owner-navy-700);
+  outline-offset: 2px;
+}
+
+#ownerDetailsPage .owner-tab--vehicles { color: var(--owner-teal-700); }
+#ownerDetailsPage .owner-tab--vehicles:hover { background: rgba(15, 118, 110, 0.08); }
+#ownerDetailsPage .owner-tab--vehicles.is-active {
+  background: linear-gradient(135deg, var(--owner-teal-700), #0d9488);
+  color: #fff;
+  box-shadow: var(--shadow-md);
+}
+#ownerDetailsPage .owner-tab--vehicles:focus-visible {
+  outline: 2px solid var(--owner-teal-500);
+  outline-offset: 2px;
+}
+
+/* ── Panels ── */
+#ownerDetailsPage .owner-tab-panel[hidden] { display: none; }
+#ownerDetailsPage [data-panel="ledger"] h3 { color: var(--owner-navy-700); }
+#ownerDetailsPage [data-panel="vehicles"] h3 { color: var(--owner-teal-700); }
+
+@media (max-width: 480px) {
+  #ownerDetailsPage .ent-details-header { padding: 16px; }
+  #ownerDetailsPage .owner-tabs { padding: 4px; gap: 6px; }
+  #ownerDetailsPage .owner-tab { padding: 9px 8px; font-size: 0.875rem; }
+}

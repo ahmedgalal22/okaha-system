@@ -500,6 +500,27 @@ window.OwnersModule = OwnersModule;
 let _activeAccountTab = 'customers'; // customers | mandoubs
 let _selectedClient = null;
 let _balanceActionType = 'deposit';
+// Owner/broker details tabs: survives this page's internal re-renders for the
+// same account; reset to 'ledger' whenever a different account is opened.
+let _ownerDetailsTab = 'ledger'; // ledger | vehicles
+let _ownerDetailsTabFor = null;  // `${type}:${id}` the tab selection belongs to
+
+// Single activation path for mouse and keyboard: updates module state,
+// aria-selected, roving tabindex, and panel visibility together.
+function _activateOwnerTab(tab) {
+  _ownerDetailsTab = tab === 'vehicles' ? 'vehicles' : 'ledger';
+  const page = document.getElementById('ownerDetailsPage');
+  if (!page) return;
+  page.querySelectorAll('[data-action="owner-tab"]').forEach((btn) => {
+    const isActive = btn.dataset.tab === _ownerDetailsTab;
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    btn.tabIndex = isActive ? 0 : -1;
+  });
+  page.querySelectorAll('.owner-tab-panel').forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== _ownerDetailsTab;
+  });
+}
 const LAST_PAGE_CTX_KEY = 'financial_last_page_ctx';
 
 function _fmt(n) {
@@ -1399,6 +1420,13 @@ async function showOwnerDetails(id, type = 'owner') {
   if (!client) return;
   _selectedClient = client;
 
+  const tabClientKey = `${client.type}:${String(client.id)}`;
+  if (_ownerDetailsTabFor !== tabClientKey) {
+    _ownerDetailsTabFor = tabClientKey;
+    _ownerDetailsTab = 'ledger';
+  }
+  const activeTab = _ownerDetailsTab === 'vehicles' ? 'vehicles' : 'ledger';
+
   sessionStorage.setItem(LAST_PAGE_CTX_KEY, JSON.stringify({
     page: 'ownerDetailsPage',
     ownerId: String(id),
@@ -1437,8 +1465,23 @@ async function showOwnerDetails(id, type = 'owner') {
         </div>
       </div>
 
-      ${ledgerHtml}
-      ${relatedHtml}
+      <div class="owner-tabs" role="tablist" aria-label="أقسام الحساب">
+        <button type="button" role="tab" id="owner-tab-ledger" data-action="owner-tab" data-tab="ledger"
+          class="owner-tab owner-tab--ledger${activeTab === 'ledger' ? ' is-active' : ''}"
+          aria-selected="${activeTab === 'ledger'}" aria-controls="owner-panel-ledger"
+          tabindex="${activeTab === 'ledger' ? '0' : '-1'}">الحركات</button>
+        <button type="button" role="tab" id="owner-tab-vehicles" data-action="owner-tab" data-tab="vehicles"
+          class="owner-tab owner-tab--vehicles${activeTab === 'vehicles' ? ' is-active' : ''}"
+          aria-selected="${activeTab === 'vehicles'}" aria-controls="owner-panel-vehicles"
+          tabindex="${activeTab === 'vehicles' ? '0' : '-1'}">المركبات والسائقين</button>
+      </div>
+
+      <div class="owner-tab-panel" id="owner-panel-ledger" role="tabpanel" aria-labelledby="owner-tab-ledger" data-panel="ledger"${activeTab === 'ledger' ? '' : ' hidden'}>
+        ${ledgerHtml}
+      </div>
+      <div class="owner-tab-panel" id="owner-panel-vehicles" role="tabpanel" aria-labelledby="owner-tab-vehicles" data-panel="vehicles"${activeTab === 'vehicles' ? '' : ' hidden'}>
+        ${relatedHtml}
+      </div>
 
       <div id="balanceEntryModal" class="modal-overlay hidden">
         <div class="modal">
@@ -1540,6 +1583,37 @@ function attachOwnersPageListeners() {
   if (document.body.dataset.customerStatementBound) return;
   document.body.dataset.customerStatementBound = '1';
 
+  // Owner/broker tabs keyboard navigation (WAI-ARIA tabs pattern):
+  // Arrow keys move between tabs (direction-aware for RTL), Home/End jump
+  // to first/last. Activation is automatic, matching the click behavior.
+  document.addEventListener('keydown', (e) => {
+    const btn = e.target.closest?.('[data-action="owner-tab"]');
+    if (!btn) return;
+    const tablist = btn.closest('[role="tablist"]');
+    if (!tablist) return;
+    const tabs = [...tablist.querySelectorAll('[data-action="owner-tab"]')];
+    const idx = tabs.indexOf(btn);
+    if (idx === -1) return;
+
+    const rtl = document.documentElement.dir === 'rtl'
+      || getComputedStyle(tablist).direction === 'rtl';
+    let next = null;
+    if (e.key === 'Home') {
+      next = tabs[0];
+    } else if (e.key === 'End') {
+      next = tabs[tabs.length - 1];
+    } else if (e.key === 'ArrowRight') {
+      next = tabs[(idx + (rtl ? -1 : 1) + tabs.length) % tabs.length];
+    } else if (e.key === 'ArrowLeft') {
+      next = tabs[(idx + (rtl ? 1 : -1) + tabs.length) % tabs.length];
+    }
+    if (!next) return;
+
+    e.preventDefault();
+    _activateOwnerTab(next.dataset.tab);
+    next.focus();
+  });
+
   document.addEventListener('click', async (e) => {
     // ── Dropdown toggle ──
     if (e.target.closest('[data-action="toggle-add-dropdown"]')) {
@@ -1551,6 +1625,13 @@ function attachOwnersPageListeners() {
     if (!e.target.closest('#addNameDropdownWrap')) {
       const dd = document.getElementById('addNameDropdown');
       if (dd && !dd.classList.contains('hidden')) dd.classList.add('hidden');
+    }
+
+    // ── Owner/broker details tabs (view-only toggle) ──
+    const ownerTabBtn = e.target.closest('[data-action="owner-tab"]');
+    if (ownerTabBtn) {
+      _activateOwnerTab(ownerTabBtn.dataset.tab);
+      return;
     }
 
     // ── Add owner/broker type selection ──
